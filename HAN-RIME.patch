@@ -1,0 +1,382 @@
+From b393e05dbbade8ed34ebde6b768172d4381ba872 Mon Sep 17 00:00:00 2001
+From: "Dannys.Han" <han@wetime.com>
+Date: Tue, 19 May 2026 23:54:17 -0700
+Subject: [PATCH 1/2] feat: Command+Space toggles Chinese/English (global event
+ tap)
+
+- handle() intercepts pure Command+Space and toggles ascii_mode
+- global CGEventTap captures Command+Space even in apps (e.g. terminals)
+  that bypass the input method; needs Accessibility permission
+- track the focused controller via SquirrelInputController.current
+---
+ sources/SquirrelApplicationDelegate.swift | 56 +++++++++++++++++++++++
+ sources/SquirrelInputController.swift     | 26 +++++++++++
+ 2 files changed, 82 insertions(+)
+
+diff --git a/sources/SquirrelApplicationDelegate.swift b/sources/SquirrelApplicationDelegate.swift
+index c603760..225f628 100644
+--- a/sources/SquirrelApplicationDelegate.swift
++++ b/sources/SquirrelApplicationDelegate.swift
+@@ -8,6 +8,7 @@
+ import UserNotifications
+ import Sparkle
+ import AppKit
++import Carbon
+ 
+ final class SquirrelApplicationDelegate: NSObject, NSApplicationDelegate, SPUStandardUserDriverDelegate, UNUserNotificationCenterDelegate {
+   static let rimeWikiURL = URL(string: "https://github.com/rime/home/wiki")!
+@@ -18,6 +19,8 @@ final class SquirrelApplicationDelegate: NSObject, NSApplicationDelegate, SPUSta
+   var config: SquirrelConfig?
+   var panel: SquirrelPanel?
+   var enableNotifications = false
++  fileprivate var eventTap: CFMachPort?
++  private var eventTapRunLoopSource: CFRunLoopSource?
+   let updateController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+   var supportsGentleScheduledUpdateReminders: Bool {
+     true
+@@ -55,15 +58,44 @@ final class SquirrelApplicationDelegate: NSObject, NSApplicationDelegate, SPUSta
+   func applicationWillFinishLaunching(_ notification: Notification) {
+     panel = SquirrelPanel(position: .zero)
+     addObservers()
++    setupCommandSpaceHotKey()
+   }
+ 
+   func applicationWillTerminate(_ notification: Notification) {
+     // swiftlint:disable:next notification_center_detachment
+     NotificationCenter.default.removeObserver(self)
+     DistributedNotificationCenter.default().removeObserver(self)
++    if let tap = eventTap {
++      CGEvent.tapEnable(tap: tap, enable: false)
++    }
++    if let source = eventTapRunLoopSource {
++      CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
++    }
+     panel?.hide()
+   }
+ 
++  // Intercept Command+Space globally so it toggles Chinese/English even in apps
++  // (e.g. some terminals) that don't route the key through the input method.
++  // Swallowing the event needs Accessibility permission; the system prompt shows
++  // only while permission is missing. After granting, restart Squirrel.
++  func setupCommandSpaceHotKey() {
++    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
++    let trusted = AXIsProcessTrustedWithOptions(options)
++    let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
++    guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
++                                      options: .defaultTap, eventsOfInterest: mask,
++                                      callback: commandSpaceTapCallback,
++                                      userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
++      print("Squirrel: Command+Space event tap not created (accessibility trusted: \(trusted)). Grant Accessibility permission and restart Squirrel.")
++      return
++    }
++    eventTap = tap
++    let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
++    eventTapRunLoopSource = source
++    CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
++    CGEvent.tapEnable(tap: tap, enable: true)
++  }
++
+   func deploy() {
+     print("Start maintenance...")
+     self.shutdownRime()
+@@ -235,6 +267,30 @@ final class SquirrelApplicationDelegate: NSObject, NSApplicationDelegate, SPUSta
+ 
+ }
+ 
++// C callback for the global Command+Space event tap. Toggles ascii_mode on the
++// active input session and swallows the event so the focused app never sees it.
++private let commandSpaceTapCallback: CGEventTapCallBack = { _, type, event, refcon in
++  // Re-enable the tap if the system disabled it (timeout or user input).
++  if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
++    if let refcon = refcon {
++      let delegate = Unmanaged<SquirrelApplicationDelegate>.fromOpaque(refcon).takeUnretainedValue()
++      if let tap = delegate.eventTap {
++        CGEvent.tapEnable(tap: tap, enable: true)
++      }
++    }
++    return Unmanaged.passUnretained(event)
++  }
++  guard type == .keyDown else { return Unmanaged.passUnretained(event) }
++  let modifierMask: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
++  let isCommandOnly = event.flags.intersection(modifierMask) == .maskCommand
++  let keycode = event.getIntegerValueField(.keyboardEventKeycode)
++  if isCommandOnly, keycode == Int64(kVK_Space), let controller = SquirrelInputController.current {
++    controller.toggleAsciiMode()
++    return nil
++  }
++  return Unmanaged.passUnretained(event)
++}
++
+ private func notificationHandler(contextObject: UnsafeMutableRawPointer?, sessionId: RimeSessionId, messageTypeC: UnsafePointer<CChar>?, messageValueC: UnsafePointer<CChar>?) {
+   let delegate: SquirrelApplicationDelegate = Unmanaged<SquirrelApplicationDelegate>.fromOpaque(contextObject!).takeUnretainedValue()
+ 
+diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
+index 398a469..1423245 100644
+--- a/sources/SquirrelInputController.swift
++++ b/sources/SquirrelInputController.swift
+@@ -6,6 +6,7 @@
+ //
+ 
+ import InputMethodKit
++import Carbon
+ 
+ final class SquirrelInputController: IMKInputController {
+   private static let keyRollOver = 50
+@@ -28,6 +29,9 @@ final class SquirrelInputController: IMKInputController {
+   private var chordTimer: Timer?
+   private var chordDuration: TimeInterval = 0
+   private var currentApp: String = ""
++  // The controller serving the focused client; used by the global Command+Space
++  // event tap to toggle ascii_mode on the active session.
++  static weak var current: SquirrelInputController?
+ 
+   // swiftlint:disable:next cyclomatic_complexity
+   override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+@@ -105,6 +109,13 @@ final class SquirrelInputController: IMKInputController {
+       rimeUpdate()
+ 
+     case .keyDown:
++      // Command+Space toggles between Chinese and ASCII (English) mode.
++      // Requires the system Command+Space shortcut to be unbound so the event reaches here.
++      if modifiers.intersection([.command, .control, .option, .shift]) == .command,
++         event.keyCode == UInt16(kVK_Space) {
++        toggleAsciiMode()
++        return true
++      }
+       // ignore Command+X hotkeys.
+       if modifiers.contains(.command) {
+         break
+@@ -175,6 +186,17 @@ final class SquirrelInputController: IMKInputController {
+     return true
+   }
+ 
++  // Toggle Chinese/ASCII (English) mode on the active session. Reused by the
++  // in-process keyDown handler and the global Command+Space event tap.
++  func toggleAsciiMode() {
++    if session == 0 || !rimeAPI.find_session(session) {
++      createSession()
++      if session == 0 { return }
++    }
++    rimeAPI.set_option(session, "ascii_mode", !rimeAPI.get_option(session, "ascii_mode"))
++    rimeUpdate()
++  }
++
+   override func recognizedEvents(_ sender: Any!) -> Int {
+     // print("[DEBUG] recognizedEvents:")
+     return Int(NSEvent.EventTypeMask.Element(arrayLiteral: .keyDown, .flagsChanged).rawValue)
+@@ -182,6 +204,7 @@ final class SquirrelInputController: IMKInputController {
+ 
+   override func activateServer(_ sender: Any!) {
+     self.client ?= sender as? IMKTextInput
++    SquirrelInputController.current = self
+     // print("[DEBUG] activateServer:")
+     var keyboardLayout = NSApp.squirrelAppDelegate.config?.getString("keyboard_layout") ?? ""
+     if keyboardLayout == "last" || keyboardLayout == "" {
+@@ -209,6 +232,9 @@ final class SquirrelInputController: IMKInputController {
+     hidePalettes()
+     commitComposition(sender)
+     client = nil
++    if SquirrelInputController.current === self {
++      SquirrelInputController.current = nil
++    }
+   }
+ 
+   override func hidePalettes() {
+-- 
+2.50.1 (Apple Git-155)
+
+
+From 847d7d61ce4bf2d8ae8777799a647155df6c6637 Mon Sep 17 00:00:00 2001
+From: "Dannys.Han" <han@wetime.com>
+Date: Wed, 20 May 2026 01:29:39 -0700
+Subject: [PATCH 2/2] feat: pangu spacing and smart full/half-width space
+
+- pangu spacing at CJK<->ASCII boundary, reading the real char before the
+  cursor (commit path + ascii passthrough); switch: pangu_spacing/enabled
+- smart space: full-width or half-width space by the preceding char when not
+  composing; switch: smart_space/enabled
+- SquirrelConfig.open(config:) to read schema/default config switches
+---
+ sources/SquirrelConfig.swift          |   6 ++
+ sources/SquirrelInputController.swift | 122 ++++++++++++++++++++++++++
+ 2 files changed, 128 insertions(+)
+
+diff --git a/sources/SquirrelConfig.swift b/sources/SquirrelConfig.swift
+index 3ae74a9..798c309 100644
+--- a/sources/SquirrelConfig.swift
++++ b/sources/SquirrelConfig.swift
+@@ -21,6 +21,12 @@ final class SquirrelConfig {
+     return isOpen
+   }
+ 
++  func open(config name: String) -> Bool {
++    close()
++    isOpen = rimeAPI.config_open(name, &config)
++    return isOpen
++  }
++
+   func open(schemaID: String, baseConfig: SquirrelConfig?) -> Bool {
+     close()
+     isOpen = rimeAPI.schema_open(schemaID, &config)
+diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
+index 1423245..1fc0aed 100644
+--- a/sources/SquirrelInputController.swift
++++ b/sources/SquirrelInputController.swift
+@@ -32,6 +32,10 @@ final class SquirrelInputController: IMKInputController {
+   // The controller serving the focused client; used by the global Command+Space
+   // event tap to toggle ascii_mode on the active session.
+   static weak var current: SquirrelInputController?
++  // Frontend pangu spacing on/off, mirrors `pangu_spacing/enabled` in the Rime config.
++  private var panguSpacingEnabled = true
++  // Smart space on/off, mirrors `smart_space/enabled` in the Rime config.
++  private var smartSpaceEnabled = true
+ 
+   // swiftlint:disable:next cyclomatic_complexity
+   override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+@@ -121,6 +125,12 @@ final class SquirrelInputController: IMKInputController {
+         break
+       }
+ 
++      insertPanguSpaceForPassthroughIfNeeded(event: event, modifiers: modifiers)
++
++      if handleSmartSpaceIfNeeded(event: event, modifiers: modifiers) {
++        return true
++      }
++
+       let keyCode = event.keyCode
+       var keyChars = event.charactersIgnoringModifiers
+       let capitalModifiers = modifiers.isSubset(of: [.shift, .capsLock])
+@@ -474,6 +484,7 @@ private extension SquirrelInputController {
+       if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
+         schemaId = String(cString: schema_id)
+         NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
++        reloadSpacingSettings(schemaID: schemaId)
+         // inline preedit
+         if let panel = NSApp.squirrelAppDelegate.panel {
+           inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
+@@ -586,11 +597,122 @@ private extension SquirrelInputController {
+   func commit(string: String) {
+     guard let client = client else { return }
+     // print("[DEBUG] commitString: \(string)")
++    var string = string
++    if needsPanguSpace(before: string, client: client) {
++      string = " " + string
++    }
+     client.insertText(string, replacementRange: .empty)
+     preedit = ""
+     hidePalettes()
+   }
+ 
++  // Pangu spacing: add a space at a CJK <-> ASCII-alphanumeric boundary, based on
++  // the real character before the insertion point in the client app (robust to
++  // cursor moves and pasted text). Falls back to no space when the app doesn't
++  // expose its text (e.g. some terminals).
++  private func needsPanguSpace(before string: String, client: IMKTextInput) -> Bool {
++    guard panguSpacingEnabled, let next = string.unicodeScalars.first else { return false }
++    // The committed text replaces the marked (composing) text, so the character
++    // before it sits just before the marked range, not inside the composing buffer.
++    let marked = client.markedRange()
++    let insertLocation: Int
++    if marked.location != NSNotFound {
++      insertLocation = marked.location
++    } else {
++      let selected = client.selectedRange()
++      guard selected.location != NSNotFound else { return false }
++      insertLocation = selected.location
++    }
++    guard insertLocation > 0,
++          let prev = client.attributedSubstring(from: NSRange(location: insertLocation - 1, length: 1))?.string.unicodeScalars.first
++    else { return false }
++    return (Self.isCJK(prev) && Self.isASCIIAlphanumeric(next)) ||
++           (Self.isASCIIAlphanumeric(prev) && Self.isCJK(next))
++  }
++
++  private static func isCJK(_ scalar: Unicode.Scalar) -> Bool {
++    switch scalar.value {
++    case 0x4E00...0x9FFF,   // CJK Unified Ideographs
++         0x3400...0x4DBF,   // Extension A
++         0xF900...0xFAFF,   // Compatibility Ideographs
++         0x20000...0x2A6DF, // Extension B
++         0x2A700...0x2EBEF: // Extensions C–F
++      return true
++    default:
++      return false
++    }
++  }
++
++  private static func isASCIIAlphanumeric(_ scalar: Unicode.Scalar) -> Bool {
++    switch scalar.value {
++    case 0x30...0x39, 0x41...0x5A, 0x61...0x7A:
++      return true
++    default:
++      return false
++    }
++  }
++
++  // In ascii (passthrough English) mode, typing a letter/digit right after a CJK
++  // character inserts a leading space, covering the Chinese -> English boundary
++  // that the committed-text path can't see (passthrough English never commits).
++  private func insertPanguSpaceForPassthroughIfNeeded(event: NSEvent, modifiers: NSEvent.ModifierFlags) {
++    guard panguSpacingEnabled,
++          rimeAPI.get_option(session, "ascii_mode"),
++          modifiers.intersection([.command, .control, .option]).isEmpty,
++          let next = event.charactersIgnoringModifiers?.unicodeScalars.first,
++          Self.isASCIIAlphanumeric(next),
++          let client = client else { return }
++    let selected = client.selectedRange()
++    guard selected.location != NSNotFound, selected.location > 0,
++          let prev = client.attributedSubstring(from: NSRange(location: selected.location - 1, length: 1))?.string.unicodeScalars.first,
++          Self.isCJK(prev) else { return }
++    client.insertText(" ", replacementRange: .empty)
++  }
++
++  // Read the spacing switches (mirror `pangu_spacing/enabled` and `smart_space/enabled`,
++  // the same keys the Rime Lua scripts use). Schema config takes precedence over the
++  // default config; an absent key defaults to enabled.
++  private func reloadSpacingSettings(schemaID: String) {
++    let defaultConfig = SquirrelConfig()
++    _ = defaultConfig.open(config: "default")
++    let schema = SquirrelConfig()
++    defer {
++      schema.close()
++      defaultConfig.close()
++    }
++    let config = schema.open(schemaID: schemaID, baseConfig: defaultConfig) ? schema : defaultConfig
++    panguSpacingEnabled = config.getBool("pangu_spacing/enabled") ?? true
++    smartSpaceEnabled = config.getBool("smart_space/enabled") ?? true
++  }
++
++  // Smart space: when space is typed outside composition (and not in ASCII mode),
++  // choose a full-width "　" or half-width " " space by the real character before
++  // the cursor — ASCII (0x20–0x7E) -> half-width, otherwise full-width. When the
++  // previous character can't be read (line start / unsupported app), fall back to
++  // the default behavior.
++  private func handleSmartSpaceIfNeeded(event: NSEvent, modifiers: NSEvent.ModifierFlags) -> Bool {
++    guard smartSpaceEnabled,
++          event.keyCode == UInt16(kVK_Space),
++          modifiers.intersection([.command, .control, .option]).isEmpty,
++          !rimeAPI.get_option(session, "ascii_mode"),
++          !isComposing(),
++          let client = client else { return false }
++    let selected = client.selectedRange()
++    guard selected.location != NSNotFound, selected.location > 0,
++          let prev = client.attributedSubstring(from: NSRange(location: selected.location - 1, length: 1))?.string.unicodeScalars.first
++    else { return false }
++    let space = (prev.value >= 0x20 && prev.value <= 0x7E) ? " " : "\u{3000}"
++    client.insertText(space, replacementRange: .empty)
++    return true
++  }
++
++  private func isComposing() -> Bool {
++    var ctx = RimeContext_stdbool.rimeStructInit()
++    guard rimeAPI.get_context(session, &ctx) else { return false }
++    defer { _ = rimeAPI.free_context(&ctx) }
++    return ctx.composition.length > 0
++  }
++
+   func show(preedit: String, selRange: NSRange, caretPos: Int) {
+     guard let client = client else { return }
+     // print("[DEBUG] showPreeditString: '\(preedit)'")
+-- 
+2.50.1 (Apple Git-155)
+
