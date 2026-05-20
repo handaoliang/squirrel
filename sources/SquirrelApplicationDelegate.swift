@@ -8,6 +8,7 @@
 import UserNotifications
 import Sparkle
 import AppKit
+import Carbon
 
 final class SquirrelApplicationDelegate: NSObject, NSApplicationDelegate, SPUStandardUserDriverDelegate, UNUserNotificationCenterDelegate {
   static let rimeWikiURL = URL(string: "https://github.com/rime/home/wiki")!
@@ -18,6 +19,8 @@ final class SquirrelApplicationDelegate: NSObject, NSApplicationDelegate, SPUSta
   var config: SquirrelConfig?
   var panel: SquirrelPanel?
   var enableNotifications = false
+  fileprivate var eventTap: CFMachPort?
+  private var eventTapRunLoopSource: CFRunLoopSource?
   let updateController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
   var supportsGentleScheduledUpdateReminders: Bool {
     true
@@ -55,13 +58,42 @@ final class SquirrelApplicationDelegate: NSObject, NSApplicationDelegate, SPUSta
   func applicationWillFinishLaunching(_ notification: Notification) {
     panel = SquirrelPanel(position: .zero)
     addObservers()
+    setupCommandSpaceHotKey()
   }
 
   func applicationWillTerminate(_ notification: Notification) {
     // swiftlint:disable:next notification_center_detachment
     NotificationCenter.default.removeObserver(self)
     DistributedNotificationCenter.default().removeObserver(self)
+    if let tap = eventTap {
+      CGEvent.tapEnable(tap: tap, enable: false)
+    }
+    if let source = eventTapRunLoopSource {
+      CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+    }
     panel?.hide()
+  }
+
+  // Intercept Command+Space globally so it toggles Chinese/English even in apps
+  // (e.g. some terminals) that don't route the key through the input method.
+  // Swallowing the event needs Accessibility permission; the system prompt shows
+  // only while permission is missing. After granting, restart Squirrel.
+  func setupCommandSpaceHotKey() {
+    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+    let trusted = AXIsProcessTrustedWithOptions(options)
+    let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+    guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
+                                      options: .defaultTap, eventsOfInterest: mask,
+                                      callback: commandSpaceTapCallback,
+                                      userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
+      print("Squirrel: Command+Space event tap not created (accessibility trusted: \(trusted)). Grant Accessibility permission and restart Squirrel.")
+      return
+    }
+    eventTap = tap
+    let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+    eventTapRunLoopSource = source
+    CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+    CGEvent.tapEnable(tap: tap, enable: true)
   }
 
   func deploy() {
@@ -233,6 +265,30 @@ final class SquirrelApplicationDelegate: NSObject, NSApplicationDelegate, SPUSta
     return .terminateNow
   }
 
+}
+
+// C callback for the global Command+Space event tap. Toggles ascii_mode on the
+// active input session and swallows the event so the focused app never sees it.
+private let commandSpaceTapCallback: CGEventTapCallBack = { _, type, event, refcon in
+  // Re-enable the tap if the system disabled it (timeout or user input).
+  if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+    if let refcon = refcon {
+      let delegate = Unmanaged<SquirrelApplicationDelegate>.fromOpaque(refcon).takeUnretainedValue()
+      if let tap = delegate.eventTap {
+        CGEvent.tapEnable(tap: tap, enable: true)
+      }
+    }
+    return Unmanaged.passUnretained(event)
+  }
+  guard type == .keyDown else { return Unmanaged.passUnretained(event) }
+  let modifierMask: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
+  let isCommandOnly = event.flags.intersection(modifierMask) == .maskCommand
+  let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+  if isCommandOnly, keycode == Int64(kVK_Space), let controller = SquirrelInputController.current {
+    controller.toggleAsciiMode()
+    return nil
+  }
+  return Unmanaged.passUnretained(event)
 }
 
 private func notificationHandler(contextObject: UnsafeMutableRawPointer?, sessionId: RimeSessionId, messageTypeC: UnsafePointer<CChar>?, messageValueC: UnsafePointer<CChar>?) {

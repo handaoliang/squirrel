@@ -6,6 +6,7 @@
 //
 
 import InputMethodKit
+import Carbon
 
 final class SquirrelInputController: IMKInputController {
   private static let keyRollOver = 50
@@ -28,6 +29,9 @@ final class SquirrelInputController: IMKInputController {
   private var chordTimer: Timer?
   private var chordDuration: TimeInterval = 0
   private var currentApp: String = ""
+  // The controller serving the focused client; used by the global Command+Space
+  // event tap to toggle ascii_mode on the active session.
+  static weak var current: SquirrelInputController?
 
   // swiftlint:disable:next cyclomatic_complexity
   override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
@@ -105,6 +109,13 @@ final class SquirrelInputController: IMKInputController {
       rimeUpdate()
 
     case .keyDown:
+      // Command+Space toggles between Chinese and ASCII (English) mode.
+      // Requires the system Command+Space shortcut to be unbound so the event reaches here.
+      if modifiers.intersection([.command, .control, .option, .shift]) == .command,
+         event.keyCode == UInt16(kVK_Space) {
+        toggleAsciiMode()
+        return true
+      }
       // ignore Command+X hotkeys.
       if modifiers.contains(.command) {
         break
@@ -175,6 +186,17 @@ final class SquirrelInputController: IMKInputController {
     return true
   }
 
+  // Toggle Chinese/ASCII (English) mode on the active session. Reused by the
+  // in-process keyDown handler and the global Command+Space event tap.
+  func toggleAsciiMode() {
+    if session == 0 || !rimeAPI.find_session(session) {
+      createSession()
+      if session == 0 { return }
+    }
+    rimeAPI.set_option(session, "ascii_mode", !rimeAPI.get_option(session, "ascii_mode"))
+    rimeUpdate()
+  }
+
   override func recognizedEvents(_ sender: Any!) -> Int {
     // print("[DEBUG] recognizedEvents:")
     return Int(NSEvent.EventTypeMask.Element(arrayLiteral: .keyDown, .flagsChanged).rawValue)
@@ -182,6 +204,7 @@ final class SquirrelInputController: IMKInputController {
 
   override func activateServer(_ sender: Any!) {
     self.client ?= sender as? IMKTextInput
+    SquirrelInputController.current = self
     // print("[DEBUG] activateServer:")
     var keyboardLayout = NSApp.squirrelAppDelegate.config?.getString("keyboard_layout") ?? ""
     if keyboardLayout == "last" || keyboardLayout == "" {
@@ -209,6 +232,9 @@ final class SquirrelInputController: IMKInputController {
     hidePalettes()
     commitComposition(sender)
     client = nil
+    if SquirrelInputController.current === self {
+      SquirrelInputController.current = nil
+    }
   }
 
   override func hidePalettes() {
