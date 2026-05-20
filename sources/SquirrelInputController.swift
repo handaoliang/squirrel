@@ -686,10 +686,11 @@ private extension SquirrelInputController {
   }
 
   // Smart space: when space is typed outside composition (and not in ASCII mode),
-  // choose a full-width "　" or half-width " " space by the real character before
-  // the cursor — ASCII (0x20–0x7E) -> half-width, otherwise full-width. When the
-  // previous character can't be read (line start / unsupported app), fall back to
-  // the default behavior.
+  // choose a full-width "　" or half-width " " space. It's half-width when either
+  // side of the cursor is English — the previous char is printable ASCII (0x20–0x7E),
+  // or the next char is an ASCII letter/digit — so a space landing between Chinese and
+  // English stays half-width; full-width otherwise. When the previous char can't be
+  // read (line start / unsupported app), fall back to the default behavior.
   private func handleSmartSpaceIfNeeded(event: NSEvent, modifiers: NSEvent.ModifierFlags) -> Bool {
     guard smartSpaceEnabled,
           event.keyCode == UInt16(kVK_Space),
@@ -701,7 +702,10 @@ private extension SquirrelInputController {
     guard selected.location != NSNotFound, selected.location > 0,
           let prev = client.attributedSubstring(from: NSRange(location: selected.location - 1, length: 1))?.string.unicodeScalars.first
     else { return false }
-    let space = (prev.value >= 0x20 && prev.value <= 0x7E) ? " " : "\u{3000}"
+    let prevIsASCII = prev.value >= 0x20 && prev.value <= 0x7E
+    let next = client.attributedSubstring(from: NSRange(location: selected.location, length: 1))?.string.unicodeScalars.first
+    let nextIsEnglish = next.map(Self.isASCIIAlphanumeric) ?? false
+    let space = (prevIsASCII || nextIsEnglish) ? " " : "\u{3000}"
     client.insertText(space, replacementRange: .empty)
     return true
   }
