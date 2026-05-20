@@ -44,6 +44,10 @@ final class SquirrelInputController: IMKInputController {
   private var englishMode = false
   private var englishBuffer = ""
   private var englishCaret = 0
+  // Candidate count from the previous update. Auto-English fires only on the
+  // transition from "had candidates" to zero, so it won't grab inputs that start
+  // at zero candidates (e.g. the z / ` reverse-lookup leaders, or uppercase).
+  private var previousCandidateCount = 0
 
   // swiftlint:disable:next cyclomatic_complexity
   override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
@@ -527,16 +531,22 @@ private extension SquirrelInputController {
 
     var ctx = RimeContext_stdbool.rimeStructInit()
     if rimeAPI.get_context(session, &ctx) {
-      // Auto-English trigger: composing but no candidates (e.g. an invalid wubi
-      // code). Hand the raw input to the frontend buffer and let it take over.
-      if autoEnglishEnabled, !englishMode, ctx.composition.length > 0, ctx.menu.num_candidates == 0 {
+      // Auto-English trigger: the input *just lost* its candidates (had some, now
+      // zero) while still composing — e.g. an invalid wubi code. The "had some"
+      // guard avoids hijacking inputs that begin at zero candidates, such as the
+      // z / ` reverse-lookup leaders or uppercase English segments.
+      let candidateCount = Int(ctx.menu.num_candidates)
+      if autoEnglishEnabled, !englishMode, ctx.composition.length > 0,
+         candidateCount == 0, previousCandidateCount > 0 {
         let seed = rimeAPI.get_input(session).map { String(cString: $0) } ?? ""
         if !seed.isEmpty {
+          previousCandidateCount = 0
           _ = rimeAPI.free_context(&ctx)
           enterEnglishMode(seed: seed)
           return
         }
       }
+      previousCandidateCount = candidateCount
       // update preedit text
       let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
 
@@ -691,16 +701,23 @@ private extension SquirrelInputController {
     }
   }
 
-  // In ascii (passthrough English) mode, typing a letter/digit right after a CJK
-  // character inserts a leading space, covering the Chinese -> English boundary
-  // that the committed-text path can't see (passthrough English never commits).
+  // Typing right after a CJK character inserts a leading space for input that
+  // passes straight through to the client without going through commit():
+  // - ascii (English) mode: any letter/digit passes through;
+  // - Chinese mode: digits pass through, but only when not composing (letters start
+  //   composing and digits select candidates while composing).
   private func insertPanguSpaceForPassthroughIfNeeded(event: NSEvent, modifiers: NSEvent.ModifierFlags) {
     guard panguSpacingEnabled,
-          rimeAPI.get_option(session, "ascii_mode"),
           modifiers.intersection([.command, .control, .option]).isEmpty,
           let next = event.charactersIgnoringModifiers?.unicodeScalars.first,
-          Self.isASCIIAlphanumeric(next),
           let client = client else { return }
+    let passesThrough: Bool
+    if rimeAPI.get_option(session, "ascii_mode") {
+      passesThrough = Self.isASCIIAlphanumeric(next)
+    } else {
+      passesThrough = (0x30...0x39).contains(next.value) && !isComposing()
+    }
+    guard passesThrough else { return }
     let selected = client.selectedRange()
     guard selected.location != NSNotFound, selected.location > 0,
           let prev = client.attributedSubstring(from: NSRange(location: selected.location - 1, length: 1))?.string.unicodeScalars.first,
@@ -772,16 +789,19 @@ private extension SquirrelInputController {
   // expects the preedit to appear). The buffer is ASCII only, so its character count
   // equals the UTF-16 offset used for the caret.
   private func showEnglishPreedit() {
-    let length = englishBuffer.utf16.count
-    let selRange = NSRange(location: 0, length: length)
     if inlinePreedit {
-      show(preedit: englishBuffer, selRange: selRange, caretPos: englishCaret)
+      // soft_cursor is off here; the system shows a real text caret via the selection.
+      show(preedit: englishBuffer, selRange: NSRange(location: 0, length: englishBuffer.utf16.count), caretPos: englishCaret)
       hidePalettes()
     } else {
+      // We build this preedit ourselves, so insert the soft-cursor caret (the same
+      // U+2038 ‸ Rime uses) at the caret position; the panel renders it inline.
+      let caretIndex = englishBuffer.index(englishBuffer.startIndex, offsetBy: englishCaret)
+      let display = String(englishBuffer[..<caretIndex]) + "\u{2038}" + String(englishBuffer[caretIndex...])
       // Keep a placeholder in the inline composing region (same trick as rimeUpdate),
-      // and render the real buffer in the floating panel with no candidates.
-      show(preedit: englishBuffer.isEmpty ? "" : "　", selRange: NSRange(location: 0, length: 0), caretPos: 0)
-      showPanel(preedit: englishBuffer, selRange: selRange, caretPos: englishCaret,
+      // and render the buffer in the floating panel with no candidates.
+      show(preedit: "　", selRange: NSRange(location: 0, length: 0), caretPos: 0)
+      showPanel(preedit: display, selRange: NSRange(location: 0, length: display.utf16.count), caretPos: englishCaret,
                 candidates: [], comments: [], labels: [], highlighted: 0, page: 0, lastPage: true)
     }
   }
@@ -811,6 +831,26 @@ private extension SquirrelInputController {
     englishMode = false
     englishBuffer = ""
     englishCaret = 0
+    previousCandidateCount = 0
+  }
+
+  // After a backspace, if the (shortened) buffer is a pure-letter code, feed it back
+  // to the engine. If candidates reappear, hand control back to the engine (so its
+  // candidates / reverse lookup return); otherwise the engine lets go again and we
+  // stay in English mode. Returns true when control was handed back to the engine.
+  private func redirectToEngineIfMatches() -> Bool {
+    guard englishBuffer.allSatisfy({ $0.isASCII && $0.isLetter }) else { return false }
+    _ = rimeAPI.set_input(session, englishBuffer)
+    var ctx = RimeContext_stdbool.rimeStructInit()
+    let hasCandidates = rimeAPI.get_context(session, &ctx) && ctx.menu.num_candidates > 0
+    _ = rimeAPI.free_context(&ctx)
+    if hasCandidates {
+      resetEnglishMode()
+      rimeUpdate()
+      return true
+    }
+    rimeAPI.clear_composition(session)
+    return false
   }
 
   // Returns true when the keystroke was consumed by English mode. Returns false to
@@ -829,14 +869,13 @@ private extension SquirrelInputController {
       cancelEnglishMode()
       return true
     case UInt16(kVK_Delete): // Backspace: delete the char before the caret.
-      if englishCaret > 0 {
-        let index = englishBuffer.index(englishBuffer.startIndex, offsetBy: englishCaret - 1)
-        englishBuffer.remove(at: index)
-        englishCaret -= 1
-      }
+      guard englishCaret > 0 else { return true }
+      let index = englishBuffer.index(englishBuffer.startIndex, offsetBy: englishCaret - 1)
+      englishBuffer.remove(at: index)
+      englishCaret -= 1
       if englishBuffer.isEmpty {
         cancelEnglishMode()
-      } else {
+      } else if !redirectToEngineIfMatches() {
         showEnglishPreedit()
       }
       return true
