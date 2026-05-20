@@ -21,6 +21,12 @@ final class SquirrelConfig {
     return isOpen
   }
 
+  func open(config name: String) -> Bool {
+    close()
+    isOpen = rimeAPI.config_open(name, &config)
+    return isOpen
+  }
+
   func open(schemaID: String, baseConfig: SquirrelConfig?) -> Bool {
     close()
     isOpen = rimeAPI.schema_open(schemaID, &config)

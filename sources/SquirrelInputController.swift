@@ -32,6 +32,10 @@ final class SquirrelInputController: IMKInputController {
   // The controller serving the focused client; used by the global Command+Space
   // event tap to toggle ascii_mode on the active session.
   static weak var current: SquirrelInputController?
+  // Frontend pangu spacing on/off, mirrors `pangu_spacing/enabled` in the Rime config.
+  private var panguSpacingEnabled = true
+  // Smart space on/off, mirrors `smart_space/enabled` in the Rime config.
+  private var smartSpaceEnabled = true
 
   // swiftlint:disable:next cyclomatic_complexity
   override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
@@ -119,6 +123,12 @@ final class SquirrelInputController: IMKInputController {
       // ignore Command+X hotkeys.
       if modifiers.contains(.command) {
         break
+      }
+
+      insertPanguSpaceForPassthroughIfNeeded(event: event, modifiers: modifiers)
+
+      if handleSmartSpaceIfNeeded(event: event, modifiers: modifiers) {
+        return true
       }
 
       let keyCode = event.keyCode
@@ -474,6 +484,7 @@ private extension SquirrelInputController {
       if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
         schemaId = String(cString: schema_id)
         NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
+        reloadSpacingSettings(schemaID: schemaId)
         // inline preedit
         if let panel = NSApp.squirrelAppDelegate.panel {
           inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
@@ -586,9 +597,120 @@ private extension SquirrelInputController {
   func commit(string: String) {
     guard let client = client else { return }
     // print("[DEBUG] commitString: \(string)")
+    var string = string
+    if needsPanguSpace(before: string, client: client) {
+      string = " " + string
+    }
     client.insertText(string, replacementRange: .empty)
     preedit = ""
     hidePalettes()
+  }
+
+  // Pangu spacing: add a space at a CJK <-> ASCII-alphanumeric boundary, based on
+  // the real character before the insertion point in the client app (robust to
+  // cursor moves and pasted text). Falls back to no space when the app doesn't
+  // expose its text (e.g. some terminals).
+  private func needsPanguSpace(before string: String, client: IMKTextInput) -> Bool {
+    guard panguSpacingEnabled, let next = string.unicodeScalars.first else { return false }
+    // The committed text replaces the marked (composing) text, so the character
+    // before it sits just before the marked range, not inside the composing buffer.
+    let marked = client.markedRange()
+    let insertLocation: Int
+    if marked.location != NSNotFound {
+      insertLocation = marked.location
+    } else {
+      let selected = client.selectedRange()
+      guard selected.location != NSNotFound else { return false }
+      insertLocation = selected.location
+    }
+    guard insertLocation > 0,
+          let prev = client.attributedSubstring(from: NSRange(location: insertLocation - 1, length: 1))?.string.unicodeScalars.first
+    else { return false }
+    return (Self.isCJK(prev) && Self.isASCIIAlphanumeric(next)) ||
+           (Self.isASCIIAlphanumeric(prev) && Self.isCJK(next))
+  }
+
+  private static func isCJK(_ scalar: Unicode.Scalar) -> Bool {
+    switch scalar.value {
+    case 0x4E00...0x9FFF,   // CJK Unified Ideographs
+         0x3400...0x4DBF,   // Extension A
+         0xF900...0xFAFF,   // Compatibility Ideographs
+         0x20000...0x2A6DF, // Extension B
+         0x2A700...0x2EBEF: // Extensions C–F
+      return true
+    default:
+      return false
+    }
+  }
+
+  private static func isASCIIAlphanumeric(_ scalar: Unicode.Scalar) -> Bool {
+    switch scalar.value {
+    case 0x30...0x39, 0x41...0x5A, 0x61...0x7A:
+      return true
+    default:
+      return false
+    }
+  }
+
+  // In ascii (passthrough English) mode, typing a letter/digit right after a CJK
+  // character inserts a leading space, covering the Chinese -> English boundary
+  // that the committed-text path can't see (passthrough English never commits).
+  private func insertPanguSpaceForPassthroughIfNeeded(event: NSEvent, modifiers: NSEvent.ModifierFlags) {
+    guard panguSpacingEnabled,
+          rimeAPI.get_option(session, "ascii_mode"),
+          modifiers.intersection([.command, .control, .option]).isEmpty,
+          let next = event.charactersIgnoringModifiers?.unicodeScalars.first,
+          Self.isASCIIAlphanumeric(next),
+          let client = client else { return }
+    let selected = client.selectedRange()
+    guard selected.location != NSNotFound, selected.location > 0,
+          let prev = client.attributedSubstring(from: NSRange(location: selected.location - 1, length: 1))?.string.unicodeScalars.first,
+          Self.isCJK(prev) else { return }
+    client.insertText(" ", replacementRange: .empty)
+  }
+
+  // Read the spacing switches (mirror `pangu_spacing/enabled` and `smart_space/enabled`,
+  // the same keys the Rime Lua scripts use). Schema config takes precedence over the
+  // default config; an absent key defaults to enabled.
+  private func reloadSpacingSettings(schemaID: String) {
+    let defaultConfig = SquirrelConfig()
+    _ = defaultConfig.open(config: "default")
+    let schema = SquirrelConfig()
+    defer {
+      schema.close()
+      defaultConfig.close()
+    }
+    let config = schema.open(schemaID: schemaID, baseConfig: defaultConfig) ? schema : defaultConfig
+    panguSpacingEnabled = config.getBool("pangu_spacing/enabled") ?? true
+    smartSpaceEnabled = config.getBool("smart_space/enabled") ?? true
+  }
+
+  // Smart space: when space is typed outside composition (and not in ASCII mode),
+  // choose a full-width "　" or half-width " " space by the real character before
+  // the cursor — ASCII (0x20–0x7E) -> half-width, otherwise full-width. When the
+  // previous character can't be read (line start / unsupported app), fall back to
+  // the default behavior.
+  private func handleSmartSpaceIfNeeded(event: NSEvent, modifiers: NSEvent.ModifierFlags) -> Bool {
+    guard smartSpaceEnabled,
+          event.keyCode == UInt16(kVK_Space),
+          modifiers.intersection([.command, .control, .option]).isEmpty,
+          !rimeAPI.get_option(session, "ascii_mode"),
+          !isComposing(),
+          let client = client else { return false }
+    let selected = client.selectedRange()
+    guard selected.location != NSNotFound, selected.location > 0,
+          let prev = client.attributedSubstring(from: NSRange(location: selected.location - 1, length: 1))?.string.unicodeScalars.first
+    else { return false }
+    let space = (prev.value >= 0x20 && prev.value <= 0x7E) ? " " : "\u{3000}"
+    client.insertText(space, replacementRange: .empty)
+    return true
+  }
+
+  private func isComposing() -> Bool {
+    var ctx = RimeContext_stdbool.rimeStructInit()
+    guard rimeAPI.get_context(session, &ctx) else { return false }
+    defer { _ = rimeAPI.free_context(&ctx) }
+    return ctx.composition.length > 0
   }
 
   func show(preedit: String, selRange: NSRange, caretPos: Int) {
