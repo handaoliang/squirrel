@@ -36,6 +36,14 @@ final class SquirrelInputController: IMKInputController {
   private var panguSpacingEnabled = true
   // Smart space on/off, mirrors `smart_space/enabled` in the Rime config.
   private var smartSpaceEnabled = true
+  // Auto-English on/off, mirrors `auto_english/enabled` in the Rime config (default off).
+  // When the input has no candidates (typical for table schemas like wubi without
+  // sentence input), the frontend takes over: it accumulates raw ASCII into its own
+  // buffer and commits only on Return, so Rime stops trying to match Chinese.
+  private var autoEnglishEnabled = false
+  private var englishMode = false
+  private var englishBuffer = ""
+  private var englishCaret = 0
 
   // swiftlint:disable:next cyclomatic_complexity
   override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
@@ -64,6 +72,13 @@ final class SquirrelInputController: IMKInputController {
 
     switch event.type {
     case .flagsChanged:
+      // In frontend English mode, swallow modifier changes so Rime can't act on
+      // a Shift tap (e.g. toggle ascii_mode) while we own the composition.
+      if englishMode {
+        lastModifiers = modifiers
+        handled = true
+        break
+      }
       if lastModifiers == modifiers {
         handled = true
         break
@@ -113,6 +128,11 @@ final class SquirrelInputController: IMKInputController {
       rimeUpdate()
 
     case .keyDown:
+      // Frontend English mode owns the keystrokes; it returns false (after flushing
+      // its buffer) for keys it wants to pass on to the normal path below.
+      if englishMode, handleEnglishModeKey(event: event, modifiers: modifiers) {
+        return true
+      }
       // Command+Space toggles between Chinese and ASCII (English) mode.
       // Requires the system Command+Space shortcut to be unbound so the event reaches here.
       if modifiers.intersection([.command, .control, .option, .shift]) == .command,
@@ -228,6 +248,7 @@ final class SquirrelInputController: IMKInputController {
       client?.overrideKeyboard(withKeyboardNamed: keyboardLayout)
     }
     preedit = ""
+    resetEnglishMode()
   }
 
   override init!(server: IMKServer!, delegate: Any!, client: Any!) {
@@ -239,6 +260,7 @@ final class SquirrelInputController: IMKInputController {
 
   override func deactivateServer(_ sender: Any!) {
     // print("[DEBUG] deactivateServer: \(sender ?? "nil")")
+    if englishMode { commitEnglishBuffer() }
     hidePalettes()
     commitComposition(sender)
     client = nil
@@ -265,6 +287,10 @@ final class SquirrelInputController: IMKInputController {
   override func commitComposition(_ sender: Any!) {
     self.client ?= sender as? IMKTextInput
     // print("[DEBUG] commitComposition: \(sender ?? "nil")")
+    if englishMode {
+      commitEnglishBuffer()
+      return
+    }
     //  commit raw input
     if session != 0 {
       if let input = rimeAPI.get_input(session) {
@@ -476,6 +502,9 @@ private extension SquirrelInputController {
   func rimeUpdate() {
     // print("[DEBUG] rimeUpdate")
     rimeConsumeCommittedText()
+    // The frontend owns the display while in English mode; nothing from Rime
+    // should overwrite our marked text.
+    if englishMode { return }
 
     var status = RimeStatus_stdbool.rimeStructInit()
     if rimeAPI.get_status(session, &status) {
@@ -498,6 +527,16 @@ private extension SquirrelInputController {
 
     var ctx = RimeContext_stdbool.rimeStructInit()
     if rimeAPI.get_context(session, &ctx) {
+      // Auto-English trigger: composing but no candidates (e.g. an invalid wubi
+      // code). Hand the raw input to the frontend buffer and let it take over.
+      if autoEnglishEnabled, !englishMode, ctx.composition.length > 0, ctx.menu.num_candidates == 0 {
+        let seed = rimeAPI.get_input(session).map { String(cString: $0) } ?? ""
+        if !seed.isEmpty {
+          _ = rimeAPI.free_context(&ctx)
+          enterEnglishMode(seed: seed)
+          return
+        }
+      }
       // update preedit text
       let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
 
@@ -683,6 +722,7 @@ private extension SquirrelInputController {
     let config = schema.open(schemaID: schemaID, baseConfig: defaultConfig) ? schema : defaultConfig
     panguSpacingEnabled = config.getBool("pangu_spacing/enabled") ?? true
     smartSpaceEnabled = config.getBool("smart_space/enabled") ?? true
+    autoEnglishEnabled = config.getBool("auto_english/enabled") ?? false
   }
 
   // Smart space: when space is typed outside composition (and not in ASCII mode),
@@ -715,6 +755,117 @@ private extension SquirrelInputController {
     guard rimeAPI.get_context(session, &ctx) else { return false }
     defer { _ = rimeAPI.free_context(&ctx) }
     return ctx.composition.length > 0
+  }
+
+  // MARK: - Frontend English mode (no-candidate passthrough)
+
+  private func enterEnglishMode(seed: String) {
+    englishBuffer = seed
+    englishCaret = seed.count
+    englishMode = true
+    rimeAPI.clear_composition(session)
+    showEnglishPreedit()
+  }
+
+  // Show the English buffer as composing text, following the schema's inline_preedit
+  // setting: inline marked text when on, otherwise the floating panel (where the user
+  // expects the preedit to appear). The buffer is ASCII only, so its character count
+  // equals the UTF-16 offset used for the caret.
+  private func showEnglishPreedit() {
+    let length = englishBuffer.utf16.count
+    let selRange = NSRange(location: 0, length: length)
+    if inlinePreedit {
+      show(preedit: englishBuffer, selRange: selRange, caretPos: englishCaret)
+      hidePalettes()
+    } else {
+      // Keep a placeholder in the inline composing region (same trick as rimeUpdate),
+      // and render the real buffer in the floating panel with no candidates.
+      show(preedit: englishBuffer.isEmpty ? "" : "　", selRange: NSRange(location: 0, length: 0), caretPos: 0)
+      showPanel(preedit: englishBuffer, selRange: selRange, caretPos: englishCaret,
+                candidates: [], comments: [], labels: [], highlighted: 0, page: 0, lastPage: true)
+    }
+  }
+
+  // Commit the buffer as final text (reuses pangu spacing) and leave English mode.
+  private func commitEnglishBuffer() {
+    let text = englishBuffer
+    englishMode = false
+    englishBuffer = ""
+    englishCaret = 0
+    if text.isEmpty {
+      show(preedit: "", selRange: .empty, caretPos: 0)
+      hidePalettes()
+    } else {
+      commit(string: text)
+    }
+  }
+
+  // Discard the buffer (Escape) and leave English mode without committing.
+  private func cancelEnglishMode() {
+    resetEnglishMode()
+    show(preedit: "", selRange: .empty, caretPos: 0)
+    hidePalettes()
+  }
+
+  private func resetEnglishMode() {
+    englishMode = false
+    englishBuffer = ""
+    englishCaret = 0
+  }
+
+  // Returns true when the keystroke was consumed by English mode. Returns false to
+  // pass the key on to the normal path (after flushing the buffer first).
+  private func handleEnglishModeKey(event: NSEvent, modifiers: NSEvent.ModifierFlags) -> Bool {
+    // Let Command/Control/Option combos through after committing the buffer.
+    if !modifiers.intersection([.command, .control, .option]).isEmpty {
+      commitEnglishBuffer()
+      return false
+    }
+    switch event.keyCode {
+    case UInt16(kVK_Return), UInt16(kVK_ANSI_KeypadEnter):
+      commitEnglishBuffer()
+      return true
+    case UInt16(kVK_Escape):
+      cancelEnglishMode()
+      return true
+    case UInt16(kVK_Delete): // Backspace: delete the char before the caret.
+      if englishCaret > 0 {
+        let index = englishBuffer.index(englishBuffer.startIndex, offsetBy: englishCaret - 1)
+        englishBuffer.remove(at: index)
+        englishCaret -= 1
+      }
+      if englishBuffer.isEmpty {
+        cancelEnglishMode()
+      } else {
+        showEnglishPreedit()
+      }
+      return true
+    case UInt16(kVK_LeftArrow):
+      if englishCaret > 0 {
+        englishCaret -= 1
+        showEnglishPreedit()
+      }
+      return true
+    case UInt16(kVK_RightArrow):
+      if englishCaret < englishBuffer.count {
+        englishCaret += 1
+        showEnglishPreedit()
+      }
+      return true
+    default:
+      // Printable ASCII (letters, digits, symbols, space): insert at the caret.
+      if let chars = event.characters, chars.unicodeScalars.count == 1,
+         let scalar = chars.unicodeScalars.first, scalar.value >= 0x20, scalar.value <= 0x7E {
+        let index = englishBuffer.index(englishBuffer.startIndex, offsetBy: englishCaret)
+        englishBuffer.insert(contentsOf: chars, at: index)
+        englishCaret += 1
+        showEnglishPreedit()
+        return true
+      }
+      // Anything else (Up/Down, Home/End, etc.): flush and let it through.
+      commitEnglishBuffer()
+      return false
+    }
   }
 
   func show(preedit: String, selRange: NSRange, caretPos: Int) {
