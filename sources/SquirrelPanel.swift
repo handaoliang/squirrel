@@ -274,6 +274,12 @@ final class SquirrelPanel: NSPanel {
         let labelWidth = labelString.boundingRect(with: .zero, options: [.usesLineFragmentOrigin]).width
         paragraphStyleCandidate.headIndent = labelWidth
       }
+      // Shift the candidate area right so it lines up with a preedit that leads with
+      // a full-width glyph (e.g. the 〔schema〕 prefix). Candidates only; preedit stays put.
+      if theme.candidateLeftPadding != 0 {
+        paragraphStyleCandidate.firstLineHeadIndent += theme.candidateLeftPadding
+        paragraphStyleCandidate.headIndent += theme.candidateLeftPadding
+      }
       line.addAttribute(.paragraphStyle, value: paragraphStyleCandidate, range: NSRange(location: 0, length: line.length))
 
       candidateRanges.append(NSRange(location: text.length, length: line.length))

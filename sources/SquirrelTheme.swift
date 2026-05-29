@@ -57,6 +57,10 @@ final class SquirrelTheme {
   private(set) var linespace: CGFloat = 0
   private(set) var preeditLinespace: CGFloat = 0
   private(set) var baseOffset: CGFloat = 0
+  // Extra left padding (pt) on the candidate area only, leaving preedit at the edge.
+  // Lets candidates line up with a preedit that starts with a full-width glyph
+  // (e.g. the 〔schema〕 prefix), whose left side bearing shifts it visually right.
+  private(set) var candidateLeftPadding: CGFloat = 0
   private(set) var alpha: CGFloat = 1
 
   private(set) var translucency = false
@@ -213,6 +217,7 @@ final class SquirrelTheme {
     linespace ?= config.getDouble("style/line_spacing")
     preeditLinespace ?= config.getDouble("style/spacing")
     baseOffset ?= config.getDouble("style/base_offset")
+    candidateLeftPadding ?= config.getDouble("style/candidate_left_padding")
     shadowSize ?= config.getDouble("style/shadow_size").map { max(0, $0) }
 
     var fontName = config.getString("style/font_face")

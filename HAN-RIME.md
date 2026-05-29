@@ -132,6 +132,35 @@ patch:
 
 ---
 
+## 6. 浮窗 Preedit 前显示当前方案名
+
+输入时在**浮窗 preedit** 前加 `〔方案名〕` 前缀(如 `〔极点五笔〕 nihao`),方便多方案(配合 §5 的 `⌘数字` 切换)时一眼看清当前方案。方案名取自当前方案配置的 `schema/name`。
+
+实现:`rimeUpdate` 给浮窗 `showPanel` 的 preedit 串前拼上前缀,并把选区 / 软光标的 utf16 偏移整体右移前缀长度,避免错位。三重守卫:**开关开 + 浮窗模式 + preedit 非空** 才加。
+
+仅**浮窗模式**(`style/inline_preedit: false`)生效;内联模式下 preedit 是以 marked text 塞进宿主 App 文本框的,加前缀会污染正在编辑的文档,故不处理。
+
+### 开关
+
+配置项 **`schema_name_in_preedit/enabled`**(布尔,**默认关**),读取规则同 §2/§3(当前方案 → `default` → 缺省关闭)。
+
+---
+
+## 7. Preedit / 候选显示微调
+
+两个纯样式项,放 `squirrel.custom.yaml` 的 `style/` 下:
+
+- **`style/preedit_placeholder`**:`inline_preedit: false` 时,组字区在宿主 App 里留一个占位字符(被宿主画成下划线)。取值 `half`(半角空格,**默认**,下划线短)/ `full`(全角空格 U+3000,组中文基线稳)/ `none`(空串,不显示;终端类 App 可能回显码字)。在控制器侧从 squirrel 基础配置读,作用于普通组字与英文模式两处占位。
+- **`style/candidate_left_padding`**(pt,默认 0):只给**候选区**加左缩进(`firstLineHeadIndent`/`headIndent`),preedit 不动。用于让候选与「以全角字形(如 §6 的 `〔`)打头的 preedit」左对齐——全角标点自带左边距会让 preedit 视觉右移,把候选右移即可对齐。注:`firstLineHeadIndent` 不接受负值,只能正向推候选,不能负向拉 preedit。
+
+```yaml
+patch:
+  "style/preedit_placeholder": half   # half | full | none
+  "style/candidate_left_padding": 10
+```
+
+---
+
 ## 配置项汇总
 
 放在方案的 `*.custom.yaml`(对该方案生效)或 `default.custom.yaml`(全局)里:
@@ -146,6 +175,15 @@ patch:
     bindings:
       "8": rime_ice
       "9": wubi86_jidian
+  schema_name_in_preedit/enabled: true   # 浮窗 preedit 前显示〔方案名〕(默认关)
+```
+
+样式项放 `squirrel.custom.yaml` 的 `style/` 下:
+
+```yaml
+patch:
+  "style/preedit_placeholder": half      # 组字占位:half(默认) | full | none
+  "style/candidate_left_padding": 10     # 候选区左缩进(pt),与〔方案名〕打头的 preedit 对齐
 ```
 
 > 这两个 key 与原来的 Lua 脚本同名复用。启用前端版后,请**移除对应的 Lua**(`pangu_spacing_filter` / `english_sentence.lua` 的补空格段 / `smart_space.lua`),否则会重复加空格。

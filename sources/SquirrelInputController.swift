@@ -36,6 +36,16 @@ final class SquirrelInputController: IMKInputController {
   private var panguSpacingEnabled = true
   // Smart space on/off, mirrors `smart_space/enabled` in the Rime config.
   private var smartSpaceEnabled = true
+  // Show the current schema's name (schema/name) as a 〔…〕 prefix in the floating
+  // preedit. Mirrors `schema_name_in_preedit/enabled` (default off); floating panel
+  // only — prefixing inline marked text would pollute the host app's text field.
+  private var schemaNameInPreeditEnabled = false
+  private var schemaDisplayName = ""
+  // Placeholder shown as inline marked text when inline_preedit is off (the host app
+  // underlines it). Mirrors `style/preedit_placeholder`: half = ASCII space (default,
+  // shorter underline), full = U+3000 full-width space (stable Chinese baseline),
+  // none = empty (no underline; may let terminals echo each code char).
+  private var preeditPlaceholder = " "
   // Auto-English on/off, mirrors `auto_english/enabled` in the Rime config (default off).
   // When the input has no candidates (typical for table schemas like wubi without
   // sentence input), the frontend takes over: it accumulates raw ASCII into its own
@@ -636,10 +646,10 @@ private extension SquirrelInputController {
           show(preedit: preedit, selRange: NSRange(location: start.utf16Offset(in: preedit), length: preedit.utf16.distance(from: start, to: end)), caretPos: caretPos.utf16Offset(in: preedit))
         } else {
           // TRICKY: display a non-empty string to prevent iTerm2 from echoing
-          // each character in preedit. note this is a full-shape space U+3000;
-          // using half shape characters like "..." will result in an unstable
-          // baseline when composing Chinese characters.
-          show(preedit: preedit.isEmpty ? "" : "　", selRange: NSRange(location: 0, length: 0), caretPos: 0)
+          // each character in preedit. The placeholder (full-width space by default)
+          // is configurable via `style/preedit_placeholder`; a full-shape space keeps
+          // the baseline stable when composing Chinese.
+          show(preedit: preedit.isEmpty ? "" : preeditPlaceholder, selRange: NSRange(location: 0, length: 0), caretPos: 0)
         }
       }
 
@@ -666,8 +676,19 @@ private extension SquirrelInputController {
       let page = Int(ctx.menu.page_no)
       let lastPage = ctx.menu.is_last_page
 
-      let selRange = NSRange(location: start.utf16Offset(in: preedit), length: preedit.utf16.distance(from: start, to: end))
-      showPanel(preedit: inlinePreedit ? "" : preedit, selRange: selRange, caretPos: caretPos.utf16Offset(in: preedit),
+      var panelPreedit = inlinePreedit ? "" : preedit
+      var panelSelRange = NSRange(location: start.utf16Offset(in: preedit), length: preedit.utf16.distance(from: start, to: end))
+      var panelCaret = caretPos.utf16Offset(in: preedit)
+      // Prefix the floating preedit with the current schema name, e.g. "〔极点五笔〕 ".
+      // Floating only (inline marked text would land in the host app's text field).
+      if schemaNameInPreeditEnabled, !inlinePreedit, !panelPreedit.isEmpty, !schemaDisplayName.isEmpty {
+        let prefix = "〔\(schemaDisplayName)〕 "
+        let shift = prefix.utf16.count
+        panelPreedit = prefix + panelPreedit
+        panelSelRange.location += shift
+        panelCaret += shift
+      }
+      showPanel(preedit: panelPreedit, selRange: panelSelRange, caretPos: panelCaret,
                 candidates: candidates, comments: comments, labels: labels, highlighted: Int(ctx.menu.highlighted_candidate_index),
                 page: page, lastPage: lastPage)
       _ = rimeAPI.free_context(&ctx)
@@ -773,6 +794,14 @@ private extension SquirrelInputController {
     panguSpacingEnabled = config.getBool("pangu_spacing/enabled") ?? true
     smartSpaceEnabled = config.getBool("smart_space/enabled") ?? true
     autoEnglishEnabled = config.getBool("auto_english/enabled") ?? false
+    schemaNameInPreeditEnabled = config.getBool("schema_name_in_preedit/enabled") ?? false
+    schemaDisplayName = config.getString("schema/name") ?? ""
+    // `style/preedit_placeholder` lives in the squirrel base config, not the schema.
+    switch NSApp.squirrelAppDelegate.config?.getString("style/preedit_placeholder") {
+    case "full": preeditPlaceholder = "\u{3000}"
+    case "none": preeditPlaceholder = ""
+    default: preeditPlaceholder = " "
+    }
     // Schema hotkeys are global (switch into any schema from any schema), so read
     // them from the default config, not the per-schema one.
     schemaHotkeysEnabled = defaultConfig.getBool("schema_hotkeys/enabled") ?? false
@@ -849,7 +878,7 @@ private extension SquirrelInputController {
       let display = String(englishBuffer[..<caretIndex]) + "\u{2038}" + String(englishBuffer[caretIndex...])
       // Keep a placeholder in the inline composing region (same trick as rimeUpdate),
       // and render the buffer in the floating panel with no candidates.
-      show(preedit: "　", selRange: NSRange(location: 0, length: 0), caretPos: 0)
+      show(preedit: preeditPlaceholder, selRange: NSRange(location: 0, length: 0), caretPos: 0)
       showPanel(preedit: display, selRange: NSRange(location: 0, length: display.utf16.count), caretPos: englishCaret,
                 candidates: [], comments: [], labels: [], highlighted: 0, page: 0, lastPage: true)
     }
