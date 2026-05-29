@@ -1,7 +1,7 @@
 From b393e05dbbade8ed34ebde6b768172d4381ba872 Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Tue, 19 May 2026 23:54:17 -0700
-Subject: [PATCH 1/7] feat: Command+Space toggles Chinese/English (global event
+Subject: [PATCH 1/8] feat: Command+Space toggles Chinese/English (global event
  tap)
 
 - handle() intercepts pure Command+Space and toggles ascii_mode
@@ -189,7 +189,7 @@ index 398a469..1423245 100644
 From 847d7d61ce4bf2d8ae8777799a647155df6c6637 Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Wed, 20 May 2026 01:29:39 -0700
-Subject: [PATCH 2/7] feat: pangu spacing and smart full/half-width space
+Subject: [PATCH 2/8] feat: pangu spacing and smart full/half-width space
 
 - pangu spacing at CJK<->ASCII boundary, reading the real char before the
   cursor (commit path + ascii passthrough); switch: pangu_spacing/enabled
@@ -384,7 +384,7 @@ index 1423245..1fc0aed 100644
 From 0933d785f7462f96799b451ecfe93d8bf1ae58b8 Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Wed, 20 May 2026 01:29:49 -0700
-Subject: [PATCH 3/7] docs: add han-rime customization doc and consolidated
+Subject: [PATCH 3/8] docs: add han-rime customization doc and consolidated
  patch
 
 ---
@@ -544,7 +544,7 @@ index 0000000..0b4bbe3
 From a7f98b87abc9eba21095725bffea889dff0d84cb Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Wed, 20 May 2026 10:13:01 -0700
-Subject: [PATCH 4/7] feat: smart space uses half-width when cursor sits
+Subject: [PATCH 4/8] feat: smart space uses half-width when cursor sits
  between Chinese and English
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -622,7 +622,7 @@ index 1fc0aed..46d5b34 100644
 From 0a6ffd9855abd224c08df8982ec7617b84908c7b Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Wed, 20 May 2026 10:41:13 -0700
-Subject: [PATCH 5/7] feat: frontend English mode when input has no candidates
+Subject: [PATCH 5/8] feat: frontend English mode when input has no candidates
 
 For table schemas like wubi without sentence input, an invalid code leaves
 the engine with no candidates. When auto_english/enabled is on, the frontend
@@ -916,7 +916,7 @@ index 46d5b34..01f16d0 100644
 From 73a1e4c5609fb7c8dba218df4f5b0910b8d32ea2 Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Wed, 20 May 2026 11:27:24 -0700
-Subject: [PATCH 6/7] feat: refine auto-English and fix Chinese-mode digit
+Subject: [PATCH 6/8] feat: refine auto-English and fix Chinese-mode digit
  spacing
 
 auto-English (no-candidate frontend mode):
@@ -1127,7 +1127,7 @@ index 01f16d0..997e346 100644
 From 2c30237b8f1aa5335b97acd8713f1fa135592d1d Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Thu, 28 May 2026 21:07:13 -0700
-Subject: [PATCH 7/7] feat: Command+digit schema hotkeys; pkg no longer forces
+Subject: [PATCH 7/8] feat: Command+digit schema hotkeys; pkg no longer forces
  logout
 
 Add front-end Command+digit schema switching (schema_hotkeys/enabled +
@@ -1361,6 +1361,213 @@ index 997e346..02e14ca 100644
    }
  
    // Smart space: when space is typed outside composition (and not in ASCII mode),
+-- 
+2.50.1 (Apple Git-155)
+
+
+From 4b1fc46d704df5f54d8a0987511bfd39bc59fa49 Mon Sep 17 00:00:00 2001
+From: "Dannys.Han" <han@wetime.com>
+Date: Thu, 28 May 2026 22:52:16 -0700
+Subject: [PATCH 8/8] feat: schema name in preedit; configurable preedit
+ placeholder & candidate padding
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- schema_name_in_preedit/enabled (default off): show 〔schema〕 prefix in the
+  floating preedit so the active schema is visible; floating-panel only, with
+  selection/caret offsets shifted by the prefix length.
+- style/preedit_placeholder (half | full | none, default half): the inline
+  composing-region placeholder shown when inline_preedit is off; half gives a
+  shorter underline than the previous hardcoded full-width space.
+- style/candidate_left_padding (pt, default 0): left indent on the candidate
+  area only, to align candidates with a preedit that leads with a full-width
+  glyph (e.g. the 〔schema〕 prefix).
+---
+ HAN-RIME.md                           | 38 +++++++++++++++++++++++
+ sources/SquirrelInputController.swift | 43 ++++++++++++++++++++++-----
+ sources/SquirrelPanel.swift           |  6 ++++
+ sources/SquirrelTheme.swift           |  5 ++++
+ 4 files changed, 85 insertions(+), 7 deletions(-)
+
+diff --git a/HAN-RIME.md b/HAN-RIME.md
+index 5459f2a..5ee5675 100644
+--- a/HAN-RIME.md
++++ b/HAN-RIME.md
+@@ -132,6 +132,35 @@ patch:
+ 
+ ---
+ 
++## 6. 浮窗 Preedit 前显示当前方案名
++
++输入时在**浮窗 preedit** 前加 `〔方案名〕` 前缀(如 `〔极点五笔〕 nihao`),方便多方案(配合 §5 的 `⌘数字` 切换)时一眼看清当前方案。方案名取自当前方案配置的 `schema/name`。
++
++实现:`rimeUpdate` 给浮窗 `showPanel` 的 preedit 串前拼上前缀,并把选区 / 软光标的 utf16 偏移整体右移前缀长度,避免错位。三重守卫:**开关开 + 浮窗模式 + preedit 非空** 才加。
++
++仅**浮窗模式**(`style/inline_preedit: false`)生效;内联模式下 preedit 是以 marked text 塞进宿主 App 文本框的,加前缀会污染正在编辑的文档,故不处理。
++
++### 开关
++
++配置项 **`schema_name_in_preedit/enabled`**(布尔,**默认关**),读取规则同 §2/§3(当前方案 → `default` → 缺省关闭)。
++
++---
++
++## 7. Preedit / 候选显示微调
++
++两个纯样式项,放 `squirrel.custom.yaml` 的 `style/` 下:
++
++- **`style/preedit_placeholder`**:`inline_preedit: false` 时,组字区在宿主 App 里留一个占位字符(被宿主画成下划线)。取值 `half`(半角空格,**默认**,下划线短)/ `full`(全角空格 U+3000,组中文基线稳)/ `none`(空串,不显示;终端类 App 可能回显码字)。在控制器侧从 squirrel 基础配置读,作用于普通组字与英文模式两处占位。
++- **`style/candidate_left_padding`**(pt,默认 0):只给**候选区**加左缩进(`firstLineHeadIndent`/`headIndent`),preedit 不动。用于让候选与「以全角字形(如 §6 的 `〔`)打头的 preedit」左对齐——全角标点自带左边距会让 preedit 视觉右移,把候选右移即可对齐。注:`firstLineHeadIndent` 不接受负值,只能正向推候选,不能负向拉 preedit。
++
++```yaml
++patch:
++  "style/preedit_placeholder": half   # half | full | none
++  "style/candidate_left_padding": 10
++```
++
++---
++
+ ## 配置项汇总
+ 
+ 放在方案的 `*.custom.yaml`(对该方案生效)或 `default.custom.yaml`(全局)里:
+@@ -146,6 +175,15 @@ patch:
+     bindings:
+       "8": rime_ice
+       "9": wubi86_jidian
++  schema_name_in_preedit/enabled: true   # 浮窗 preedit 前显示〔方案名〕(默认关)
++```
++
++样式项放 `squirrel.custom.yaml` 的 `style/` 下:
++
++```yaml
++patch:
++  "style/preedit_placeholder": half      # 组字占位:half(默认) | full | none
++  "style/candidate_left_padding": 10     # 候选区左缩进(pt),与〔方案名〕打头的 preedit 对齐
+ ```
+ 
+ > 这两个 key 与原来的 Lua 脚本同名复用。启用前端版后,请**移除对应的 Lua**(`pangu_spacing_filter` / `english_sentence.lua` 的补空格段 / `smart_space.lua`),否则会重复加空格。
+diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
+index 02e14ca..e4be612 100644
+--- a/sources/SquirrelInputController.swift
++++ b/sources/SquirrelInputController.swift
+@@ -36,6 +36,16 @@ final class SquirrelInputController: IMKInputController {
+   private var panguSpacingEnabled = true
+   // Smart space on/off, mirrors `smart_space/enabled` in the Rime config.
+   private var smartSpaceEnabled = true
++  // Show the current schema's name (schema/name) as a 〔…〕 prefix in the floating
++  // preedit. Mirrors `schema_name_in_preedit/enabled` (default off); floating panel
++  // only — prefixing inline marked text would pollute the host app's text field.
++  private var schemaNameInPreeditEnabled = false
++  private var schemaDisplayName = ""
++  // Placeholder shown as inline marked text when inline_preedit is off (the host app
++  // underlines it). Mirrors `style/preedit_placeholder`: half = ASCII space (default,
++  // shorter underline), full = U+3000 full-width space (stable Chinese baseline),
++  // none = empty (no underline; may let terminals echo each code char).
++  private var preeditPlaceholder = " "
+   // Auto-English on/off, mirrors `auto_english/enabled` in the Rime config (default off).
+   // When the input has no candidates (typical for table schemas like wubi without
+   // sentence input), the frontend takes over: it accumulates raw ASCII into its own
+@@ -636,10 +646,10 @@ private extension SquirrelInputController {
+           show(preedit: preedit, selRange: NSRange(location: start.utf16Offset(in: preedit), length: preedit.utf16.distance(from: start, to: end)), caretPos: caretPos.utf16Offset(in: preedit))
+         } else {
+           // TRICKY: display a non-empty string to prevent iTerm2 from echoing
+-          // each character in preedit. note this is a full-shape space U+3000;
+-          // using half shape characters like "..." will result in an unstable
+-          // baseline when composing Chinese characters.
+-          show(preedit: preedit.isEmpty ? "" : "　", selRange: NSRange(location: 0, length: 0), caretPos: 0)
++          // each character in preedit. The placeholder (full-width space by default)
++          // is configurable via `style/preedit_placeholder`; a full-shape space keeps
++          // the baseline stable when composing Chinese.
++          show(preedit: preedit.isEmpty ? "" : preeditPlaceholder, selRange: NSRange(location: 0, length: 0), caretPos: 0)
+         }
+       }
+ 
+@@ -666,8 +676,19 @@ private extension SquirrelInputController {
+       let page = Int(ctx.menu.page_no)
+       let lastPage = ctx.menu.is_last_page
+ 
+-      let selRange = NSRange(location: start.utf16Offset(in: preedit), length: preedit.utf16.distance(from: start, to: end))
+-      showPanel(preedit: inlinePreedit ? "" : preedit, selRange: selRange, caretPos: caretPos.utf16Offset(in: preedit),
++      var panelPreedit = inlinePreedit ? "" : preedit
++      var panelSelRange = NSRange(location: start.utf16Offset(in: preedit), length: preedit.utf16.distance(from: start, to: end))
++      var panelCaret = caretPos.utf16Offset(in: preedit)
++      // Prefix the floating preedit with the current schema name, e.g. "〔极点五笔〕 ".
++      // Floating only (inline marked text would land in the host app's text field).
++      if schemaNameInPreeditEnabled, !inlinePreedit, !panelPreedit.isEmpty, !schemaDisplayName.isEmpty {
++        let prefix = "〔\(schemaDisplayName)〕 "
++        let shift = prefix.utf16.count
++        panelPreedit = prefix + panelPreedit
++        panelSelRange.location += shift
++        panelCaret += shift
++      }
++      showPanel(preedit: panelPreedit, selRange: panelSelRange, caretPos: panelCaret,
+                 candidates: candidates, comments: comments, labels: labels, highlighted: Int(ctx.menu.highlighted_candidate_index),
+                 page: page, lastPage: lastPage)
+       _ = rimeAPI.free_context(&ctx)
+@@ -773,6 +794,14 @@ private extension SquirrelInputController {
+     panguSpacingEnabled = config.getBool("pangu_spacing/enabled") ?? true
+     smartSpaceEnabled = config.getBool("smart_space/enabled") ?? true
+     autoEnglishEnabled = config.getBool("auto_english/enabled") ?? false
++    schemaNameInPreeditEnabled = config.getBool("schema_name_in_preedit/enabled") ?? false
++    schemaDisplayName = config.getString("schema/name") ?? ""
++    // `style/preedit_placeholder` lives in the squirrel base config, not the schema.
++    switch NSApp.squirrelAppDelegate.config?.getString("style/preedit_placeholder") {
++    case "full": preeditPlaceholder = "\u{3000}"
++    case "none": preeditPlaceholder = ""
++    default: preeditPlaceholder = " "
++    }
+     // Schema hotkeys are global (switch into any schema from any schema), so read
+     // them from the default config, not the per-schema one.
+     schemaHotkeysEnabled = defaultConfig.getBool("schema_hotkeys/enabled") ?? false
+@@ -849,7 +878,7 @@ private extension SquirrelInputController {
+       let display = String(englishBuffer[..<caretIndex]) + "\u{2038}" + String(englishBuffer[caretIndex...])
+       // Keep a placeholder in the inline composing region (same trick as rimeUpdate),
+       // and render the buffer in the floating panel with no candidates.
+-      show(preedit: "　", selRange: NSRange(location: 0, length: 0), caretPos: 0)
++      show(preedit: preeditPlaceholder, selRange: NSRange(location: 0, length: 0), caretPos: 0)
+       showPanel(preedit: display, selRange: NSRange(location: 0, length: display.utf16.count), caretPos: englishCaret,
+                 candidates: [], comments: [], labels: [], highlighted: 0, page: 0, lastPage: true)
+     }
+diff --git a/sources/SquirrelPanel.swift b/sources/SquirrelPanel.swift
+index 4d40ef1..6e0b67c 100644
+--- a/sources/SquirrelPanel.swift
++++ b/sources/SquirrelPanel.swift
+@@ -274,6 +274,12 @@ final class SquirrelPanel: NSPanel {
+         let labelWidth = labelString.boundingRect(with: .zero, options: [.usesLineFragmentOrigin]).width
+         paragraphStyleCandidate.headIndent = labelWidth
+       }
++      // Shift the candidate area right so it lines up with a preedit that leads with
++      // a full-width glyph (e.g. the 〔schema〕 prefix). Candidates only; preedit stays put.
++      if theme.candidateLeftPadding != 0 {
++        paragraphStyleCandidate.firstLineHeadIndent += theme.candidateLeftPadding
++        paragraphStyleCandidate.headIndent += theme.candidateLeftPadding
++      }
+       line.addAttribute(.paragraphStyle, value: paragraphStyleCandidate, range: NSRange(location: 0, length: line.length))
+ 
+       candidateRanges.append(NSRange(location: text.length, length: line.length))
+diff --git a/sources/SquirrelTheme.swift b/sources/SquirrelTheme.swift
+index feacfcc..869b526 100644
+--- a/sources/SquirrelTheme.swift
++++ b/sources/SquirrelTheme.swift
+@@ -57,6 +57,10 @@ final class SquirrelTheme {
+   private(set) var linespace: CGFloat = 0
+   private(set) var preeditLinespace: CGFloat = 0
+   private(set) var baseOffset: CGFloat = 0
++  // Extra left padding (pt) on the candidate area only, leaving preedit at the edge.
++  // Lets candidates line up with a preedit that starts with a full-width glyph
++  // (e.g. the 〔schema〕 prefix), whose left side bearing shifts it visually right.
++  private(set) var candidateLeftPadding: CGFloat = 0
+   private(set) var alpha: CGFloat = 1
+ 
+   private(set) var translucency = false
+@@ -213,6 +217,7 @@ final class SquirrelTheme {
+     linespace ?= config.getDouble("style/line_spacing")
+     preeditLinespace ?= config.getDouble("style/spacing")
+     baseOffset ?= config.getDouble("style/base_offset")
++    candidateLeftPadding ?= config.getDouble("style/candidate_left_padding")
+     shadowSize ?= config.getDouble("style/shadow_size").map { max(0, $0) }
+ 
+     var fontName = config.getString("style/font_face")
 -- 
 2.50.1 (Apple Git-155)
 
