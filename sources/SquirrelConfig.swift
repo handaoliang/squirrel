@@ -105,6 +105,22 @@ final class SquirrelConfig {
     return baseConfig?.getColor(option, inSpace: colorSpace)
   }
 
+  // Read a config map as string -> string (e.g. schema_hotkeys/bindings). Keys not
+  // present yield an empty dictionary. No base-config fallback (matches getAppOptions).
+  func getMap(_ key: String) -> [String: String] {
+    var result = [String: String]()
+    guard isOpen else { return result }
+    var iterator = RimeConfigIterator()
+    _ = rimeAPI.config_begin_map(&iterator, &config, key)
+    while rimeAPI.config_next(&iterator) {
+      if let mapKey = iterator.key, let path = iterator.path, let value = getString(String(cString: path)) {
+        result[String(cString: mapKey)] = value
+      }
+    }
+    rimeAPI.config_end(&iterator)
+    return result
+  }
+
   func getAppOptions(_ appName: String) -> [String: Bool] {
     let rootKey = "app_options/\(appName)"
     var appOptions = [String: Bool]()

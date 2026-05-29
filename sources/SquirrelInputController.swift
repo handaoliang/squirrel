@@ -48,6 +48,18 @@ final class SquirrelInputController: IMKInputController {
   // transition from "had candidates" to zero, so it won't grab inputs that start
   // at zero candidates (e.g. the z / ` reverse-lookup leaders, or uppercase).
   private var previousCandidateCount = 0
+  // Command+digit schema hotkeys, mirrors `schema_hotkeys/enabled` + the
+  // `schema_hotkeys/bindings` map (digit -> schema id) in the global Rime config.
+  // Keyed by macOS keycode so both the IMKit path and the global event tap can
+  // look it up directly. Read from `default` config (switching schema is global).
+  private var schemaHotkeysEnabled = false
+  private var schemaHotkeys: [UInt16: String] = [:]
+  private static let digitKeyCodes: [String: UInt16] = [
+    "0": UInt16(kVK_ANSI_0), "1": UInt16(kVK_ANSI_1), "2": UInt16(kVK_ANSI_2),
+    "3": UInt16(kVK_ANSI_3), "4": UInt16(kVK_ANSI_4), "5": UInt16(kVK_ANSI_5),
+    "6": UInt16(kVK_ANSI_6), "7": UInt16(kVK_ANSI_7), "8": UInt16(kVK_ANSI_8),
+    "9": UInt16(kVK_ANSI_9)
+  ]
 
   // swiftlint:disable:next cyclomatic_complexity
   override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
@@ -144,6 +156,11 @@ final class SquirrelInputController: IMKInputController {
         toggleAsciiMode()
         return true
       }
+      // Command+digit switches to a configured schema (schema_hotkeys/bindings).
+      if modifiers.intersection([.command, .control, .option, .shift]) == .command,
+         handleSchemaHotkey(keyCode: event.keyCode) {
+        return true
+      }
       // ignore Command+X hotkeys.
       if modifiers.contains(.command) {
         break
@@ -229,6 +246,22 @@ final class SquirrelInputController: IMKInputController {
     }
     rimeAPI.set_option(session, "ascii_mode", !rimeAPI.get_option(session, "ascii_mode"))
     rimeUpdate()
+  }
+
+  // Switch to the schema bound to a Command+digit hotkey. Returns true (event handled)
+  // only when the feature is on and the keycode is bound. Called from both the IMKit
+  // keyDown path and the global event tap. The schema-change UI popup comes for free
+  // via librime's notification.
+  func handleSchemaHotkey(keyCode: UInt16) -> Bool {
+    guard schemaHotkeysEnabled, let schema = schemaHotkeys[keyCode] else { return false }
+    if session == 0 || !rimeAPI.find_session(session) {
+      createSession()
+      if session == 0 { return false }
+    }
+    if englishMode { resetEnglishMode() }
+    _ = rimeAPI.select_schema(session, schema)
+    rimeUpdate()
+    return true
   }
 
   override func recognizedEvents(_ sender: Any!) -> Int {
@@ -740,6 +773,22 @@ private extension SquirrelInputController {
     panguSpacingEnabled = config.getBool("pangu_spacing/enabled") ?? true
     smartSpaceEnabled = config.getBool("smart_space/enabled") ?? true
     autoEnglishEnabled = config.getBool("auto_english/enabled") ?? false
+    // Schema hotkeys are global (switch into any schema from any schema), so read
+    // them from the default config, not the per-schema one.
+    schemaHotkeysEnabled = defaultConfig.getBool("schema_hotkeys/enabled") ?? false
+    schemaHotkeys = Self.parseSchemaHotkeys(defaultConfig.getMap("schema_hotkeys/bindings"))
+  }
+
+  // Convert a {digit-string: schema-id} config map into {keycode: schema-id}.
+  // Non-digit keys and empty schema ids are dropped.
+  private static func parseSchemaHotkeys(_ raw: [String: String]) -> [UInt16: String] {
+    var result = [UInt16: String]()
+    for (digit, schema) in raw where !schema.isEmpty {
+      if let code = digitKeyCodes[digit] {
+        result[code] = schema
+      }
+    }
+    return result
   }
 
   // Smart space: when space is typed outside composition (and not in ASCII mode),

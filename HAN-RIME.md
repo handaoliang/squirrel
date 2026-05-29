@@ -1,12 +1,12 @@
 # han-rime 自定义说明
 
-本分支(`han-rime`)在官方 [rime/squirrel](https://github.com/rime/squirrel) 基础上增加了三项**前端原生**自定义功能,全部集中在少量 Swift 源码里,便于随官方更新 rebase。
+本分支(`han-rime`)在官方 [rime/squirrel](https://github.com/rime/squirrel) 基础上增加了若干**前端原生**自定义功能,全部集中在少量 Swift 源码里,便于随官方更新 rebase。
 
 涉及文件:
 
 - `sources/SquirrelInputController.swift`
 - `sources/SquirrelApplicationDelegate.swift`
-- `sources/SquirrelConfig.swift`(新增 `open(config:)`)
+- `sources/SquirrelConfig.swift`(新增 `open(config:)`、`getMap(_:)`)
 
 > 设计原则:能力放在**前端**(Squirrel),因为前端是整条链路里唯一能向宿主 App 查询「光标前真实字符」的一层。这比 Rime 引擎层 / Lua 脚本(只能看自己的输入/上屏历史)更准,对鼠标移光标、粘贴都鲁棒。
 
@@ -100,6 +100,38 @@
 
 ---
 
+## 5. Command + 数字 直切方案
+
+`⌘0`–`⌘9` 可绑定到任意输入方案,按下即切(如 `⌘8` → 雾凇拼音、`⌘9` → 极点五笔)。切到哪个方案的提示走 librime 自带的方案通知,自动弹出。
+
+实现两条路径,与 `⌘Space` 同构、互为兜底:
+
+- **`handle()` 内拦截**:keyDown 里识别「纯 ⌘ + 数字」,查映射表命中就调 `select_schema` 切换、消费事件。走 IMKit 协议的 App 适用。
+- **全局 `CGEventTap`**(`SquirrelApplicationDelegate`):在系统会话层抢在 App 之前截获 `⌘数字`,命中即切换并吞掉事件。这样在**终端等不完整遵守 IMKit 协议的 App**里也统一生效,且优先于 App 自己的 `⌘数字` 快捷键。
+
+映射表按 macOS 键码存储,两条路径共用同一份 `handleSchemaHotkey(keyCode:)`。配置从 **`default`** 读(切方案是全局动作,不挂某个 schema)。处于前端英文模式(见 §4)时按下会先复位再切。
+
+### 前置条件
+
+同 `⌘Space`:全局生效依赖**辅助功能**权限;未授权时降级为仅 `handle()` 路径(GUI App 可用,终端不可用)。绑定的 `⌘数字` 若被某 App 占用(如浏览器切标签),授权后经 CGEventTap 会**优先给输入法**。
+
+### 开关与配置
+
+配置项 **`schema_hotkeys/enabled`**(布尔,默认关)与 **`schema_hotkeys/bindings`** 映射表(`数字字符: 方案id`)。读取规则:仅从 `default` 配置读。
+
+```yaml
+patch:
+  schema_hotkeys:
+    enabled: true
+    bindings:
+      "8": rime_ice          # ⌘8 → 雾凇拼音
+      "9": wubi86_jidian     # ⌘9 → 极点五笔
+```
+
+非数字键、空方案 id 会被忽略;`enabled` 为假或无 `bindings` 时整条特性不生效(`⌘数字` 原样放行给 App)。
+
+---
+
 ## 配置项汇总
 
 放在方案的 `*.custom.yaml`(对该方案生效)或 `default.custom.yaml`(全局)里:
@@ -109,6 +141,11 @@ patch:
   pangu_spacing/enabled: true   # 中英自动空格
   smart_space/enabled: true     # 智能全/半角空格
   auto_english/enabled: true    # 五笔无候选时转前端英文(默认关,建议只在五笔方案开)
+  schema_hotkeys:               # ⌘数字 直切方案(默认关,放 default.custom.yaml 全局生效)
+    enabled: true
+    bindings:
+      "8": rime_ice
+      "9": wubi86_jidian
 ```
 
 > 这两个 key 与原来的 Lua 脚本同名复用。启用前端版后,请**移除对应的 Lua**(`pangu_spacing_filter` / `english_sentence.lua` 的补空格段 / `smart_space.lua`),否则会重复加空格。
@@ -148,6 +185,10 @@ rm -rf "$SQ_APP"; cp -R build/Build/Products/Release/Squirrel.app "/Library/Inpu
 ```
 
 首次安装后如部分 App 打不出字,注销重登一次。
+
+### 安装包不再强制注销
+
+`package/PackageInfo` 的 `postinstall-action` 由官方默认的 `logout` 改为 `none`。`make package` 生成的 `.pkg` 装完只停在「安装成功」页(点「关闭」退出安装器),不再注销当前登录会话——`scripts/postinstall` 本就会自己 `killall Squirrel` 并重新注册/部署/启用输入源,重启输入法这步不依赖系统注销。
 
 ---
 

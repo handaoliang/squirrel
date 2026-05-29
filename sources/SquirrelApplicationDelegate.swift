@@ -288,6 +288,12 @@ private let commandSpaceTapCallback: CGEventTapCallBack = { _, type, event, refc
     controller.toggleAsciiMode()
     return nil
   }
+  // Command+digit schema hotkeys (schema_hotkeys/bindings). The controller decides
+  // whether the keycode is bound; if so it switches schema and we swallow the event.
+  if isCommandOnly, let controller = SquirrelInputController.current,
+     controller.handleSchemaHotkey(keyCode: UInt16(keycode)) {
+    return nil
+  }
   return Unmanaged.passUnretained(event)
 }
 
