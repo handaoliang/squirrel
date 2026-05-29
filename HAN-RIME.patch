@@ -1,7 +1,7 @@
 From b393e05dbbade8ed34ebde6b768172d4381ba872 Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Tue, 19 May 2026 23:54:17 -0700
-Subject: [PATCH 1/8] feat: Command+Space toggles Chinese/English (global event
+Subject: [PATCH 1/9] feat: Command+Space toggles Chinese/English (global event
  tap)
 
 - handle() intercepts pure Command+Space and toggles ascii_mode
@@ -189,7 +189,7 @@ index 398a469..1423245 100644
 From 847d7d61ce4bf2d8ae8777799a647155df6c6637 Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Wed, 20 May 2026 01:29:39 -0700
-Subject: [PATCH 2/8] feat: pangu spacing and smart full/half-width space
+Subject: [PATCH 2/9] feat: pangu spacing and smart full/half-width space
 
 - pangu spacing at CJK<->ASCII boundary, reading the real char before the
   cursor (commit path + ascii passthrough); switch: pangu_spacing/enabled
@@ -384,7 +384,7 @@ index 1423245..1fc0aed 100644
 From 0933d785f7462f96799b451ecfe93d8bf1ae58b8 Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Wed, 20 May 2026 01:29:49 -0700
-Subject: [PATCH 3/8] docs: add han-rime customization doc and consolidated
+Subject: [PATCH 3/9] docs: add han-rime customization doc and consolidated
  patch
 
 ---
@@ -544,7 +544,7 @@ index 0000000..0b4bbe3
 From a7f98b87abc9eba21095725bffea889dff0d84cb Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Wed, 20 May 2026 10:13:01 -0700
-Subject: [PATCH 4/8] feat: smart space uses half-width when cursor sits
+Subject: [PATCH 4/9] feat: smart space uses half-width when cursor sits
  between Chinese and English
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -622,7 +622,7 @@ index 1fc0aed..46d5b34 100644
 From 0a6ffd9855abd224c08df8982ec7617b84908c7b Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Wed, 20 May 2026 10:41:13 -0700
-Subject: [PATCH 5/8] feat: frontend English mode when input has no candidates
+Subject: [PATCH 5/9] feat: frontend English mode when input has no candidates
 
 For table schemas like wubi without sentence input, an invalid code leaves
 the engine with no candidates. When auto_english/enabled is on, the frontend
@@ -916,7 +916,7 @@ index 46d5b34..01f16d0 100644
 From 73a1e4c5609fb7c8dba218df4f5b0910b8d32ea2 Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Wed, 20 May 2026 11:27:24 -0700
-Subject: [PATCH 6/8] feat: refine auto-English and fix Chinese-mode digit
+Subject: [PATCH 6/9] feat: refine auto-English and fix Chinese-mode digit
  spacing
 
 auto-English (no-candidate frontend mode):
@@ -1127,7 +1127,7 @@ index 01f16d0..997e346 100644
 From 2c30237b8f1aa5335b97acd8713f1fa135592d1d Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Thu, 28 May 2026 21:07:13 -0700
-Subject: [PATCH 7/8] feat: Command+digit schema hotkeys; pkg no longer forces
+Subject: [PATCH 7/9] feat: Command+digit schema hotkeys; pkg no longer forces
  logout
 
 Add front-end Command+digit schema switching (schema_hotkeys/enabled +
@@ -1368,7 +1368,7 @@ index 997e346..02e14ca 100644
 From 4b1fc46d704df5f54d8a0987511bfd39bc59fa49 Mon Sep 17 00:00:00 2001
 From: "Dannys.Han" <han@wetime.com>
 Date: Thu, 28 May 2026 22:52:16 -0700
-Subject: [PATCH 8/8] feat: schema name in preedit; configurable preedit
+Subject: [PATCH 8/9] feat: schema name in preedit; configurable preedit
  placeholder & candidate padding
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -1568,6 +1568,349 @@ index feacfcc..869b526 100644
      shadowSize ?= config.getDouble("style/shadow_size").map { max(0, $0) }
  
      var fontName = config.getString("style/font_face")
+-- 
+2.50.1 (Apple Git-155)
+
+
+From 440ba3e52c1f4bb75752b9d656e4a9c85c95571a Mon Sep 17 00:00:00 2001
+From: "Dannys.Han" <han@wetime.com>
+Date: Fri, 29 May 2026 01:57:28 -0700
+Subject: [PATCH 9/9] feat: temp-schema invoke (z -> pinyin); secure-input
+ Shift guard
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- temp_schema (enabled/key/schema, default off): pressing the trigger key while
+  idle switches to a target schema (e.g. pinyin) for one input and auto-switches
+  back to the origin on commit or cancel. Persistent 〔schema〕 indicator in the
+  floating panel; trigger also handled by the global event tap so it works in
+  terminals (iTerm2/Ghostty) that echo the key otherwise; schema settings are
+  preloaded in activateServer so the first key after switching apps behaves.
+- secure_input_guard/enabled (default on): while secure input is active (password
+  fields) don't feed modifier changes to Rime, so Shift+letter for uppercase no
+  longer spuriously toggles ascii_mode (the 中/英 popup). Can be turned off when
+  global secure input is on for non-password reasons.
+---
+ HAN-RIME.md                               |  45 ++++++++
+ sources/SquirrelApplicationDelegate.swift |   9 ++
+ sources/SquirrelInputController.swift     | 134 +++++++++++++++++++++-
+ 3 files changed, 185 insertions(+), 3 deletions(-)
+
+diff --git a/HAN-RIME.md b/HAN-RIME.md
+index 5ee5675..f29eb9d 100644
+--- a/HAN-RIME.md
++++ b/HAN-RIME.md
+@@ -161,6 +161,46 @@ patch:
+ 
+ ---
+ 
++## 8. 临时切方案打字(z 临时拼音)
++
++针对**码表方案(如五笔)临时要打几个不会拆码的字**:空闲时按触发键(默认 `z`)**临时切到指定方案**(如雾凇拼音),打完**上屏或取消后自动切回**原方案。相当于"临时借用一下拼音",不是反查。
++
++流程:
++
++- **触发**:空闲(未组字、中文模式、本方案开启该功能)按下触发键 → 用 `get_current_schema` 记下当前方案当"老家" → `select_schema` 切到目标方案 → **消费掉该键**(不打出)。
++- **常驻指示**:临时态下即使还没打字,浮窗也常驻显示 `〔目标方案名〕`(复用 §6),像反查一样;一打字变成 `〔雾凇拼音〕 nihao` + 候选。不依赖会超时消失的通知弹窗。
++- **自动切回**:`rimeUpdate` 检测——组字区从有变空时,**上屏**(commit)或**打了又被 Esc 清空**就切回老家;空闲态按 Esc 也直接切回。
++- **终端兼容**:与 `⌘Space` 同构,触发键**同时挂在全局 `CGEventTap`** 上。iTerm2 / Ghostty 等终端即使 `handle()` 返回 true 也会回显触发键,必须在 tap 层吞掉(依赖辅助功能权限)。
++- **切 App 首键**:`activateServer` 时即预加载本方案配置,避免切到新 App 后"第一下触发键落到引擎(命中旧的 z 反查)、第二下才进拼音"。
++
++### 开关与配置
++
++放目标功能所在方案的 `*.custom.yaml`(只在该方案触发):
++
++```yaml
++patch:
++  temp_schema:
++    enabled: true
++    key: z              # 触发键(默认 z)
++    schema: rime_ice    # 临时切到的方案
++```
++
++**默认关**。启用后,引擎层原有的 `z` 反查(`recognizer/patterns/reverse_lookup` + `reverse_lookup` prefix z)已多余(`z` 在进引擎前被前端接管),可移除。
++
++---
++
++## 9. 密码框 Shift 误触拦截
++
++绑了「右 Shift 切中英」时,在**密码框(安全输入)**里按 Shift+字母打大写,会误弹「中/英」提示:安全输入态下字母 keydown 被系统挡住、只剩 Shift 的 flagsChanged,被 `ascii_composer` 当成一次 Shift 轻敲而误切。
++
++处理:flagsChanged 分支开头检测 `IsSecureEventInputEnabled()`,**安全输入态下不把修饰键变化喂给引擎**,从源头不触发误切。普通输入不受影响。
++
++### 开关
++
++配置项 **`secure_input_guard/enabled`**(布尔,**默认开**)。注意 `IsSecureEventInputEnabled()` 是**全局**标志,终端「安全键盘输入」或安全输入卡住时也为真——若那时右 Shift 切中英失效,设为 `false` 关掉本拦截。它**不会**误伤"能输中文的密码框":凡是中文能打进去的框,安全输入必然是关的,本拦截不生效。
++
++---
++
+ ## 配置项汇总
+ 
+ 放在方案的 `*.custom.yaml`(对该方案生效)或 `default.custom.yaml`(全局)里:
+@@ -176,6 +216,11 @@ patch:
+       "8": rime_ice
+       "9": wubi86_jidian
+   schema_name_in_preedit/enabled: true   # 浮窗 preedit 前显示〔方案名〕(默认关)
++  temp_schema:                  # 临时切方案打字(默认关,放码表方案如五笔的 custom 里)
++    enabled: true
++    key: z
++    schema: rime_ice
++  secure_input_guard/enabled: true   # 密码框 Shift 误触中英提示的拦截(默认开)
+ ```
+ 
+ 样式项放 `squirrel.custom.yaml` 的 `style/` 下:
+diff --git a/sources/SquirrelApplicationDelegate.swift b/sources/SquirrelApplicationDelegate.swift
+index d4eb086..8ce6873 100644
+--- a/sources/SquirrelApplicationDelegate.swift
++++ b/sources/SquirrelApplicationDelegate.swift
+@@ -294,6 +294,15 @@ private let commandSpaceTapCallback: CGEventTapCallBack = { _, type, event, refc
+      controller.handleSchemaHotkey(keyCode: UInt16(keycode)) {
+     return nil
+   }
++  // Temp-schema trigger key (e.g. z): non-compliant terminals echo it even when the
++  // input method consumes it via handle(), so swallow it here. Only inspect bare keys
++  // (no modifiers) when the active controller is idle in a temp-capable schema.
++  if event.flags.intersection(modifierMask).isEmpty,
++     let controller = SquirrelInputController.current, controller.isTempSchemaArmed,
++     let nsEvent = NSEvent(cgEvent: event),
++     controller.tryEnterTempSchema(char: nsEvent.charactersIgnoringModifiers) {
++    return nil
++  }
+   return Unmanaged.passUnretained(event)
+ }
+ 
+diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
+index e4be612..e363c51 100644
+--- a/sources/SquirrelInputController.swift
++++ b/sources/SquirrelInputController.swift
+@@ -46,6 +46,12 @@ final class SquirrelInputController: IMKInputController {
+   // shorter underline), full = U+3000 full-width space (stable Chinese baseline),
+   // none = empty (no underline; may let terminals echo each code char).
+   private var preeditPlaceholder = " "
++  // When secure input is active (password fields), don't feed modifier changes to Rime
++  // (a Shift+letter there looks like a lone Shift tap and spuriously toggles ascii_mode).
++  // Mirrors `secure_input_guard/enabled` (default on); set false if global secure input
++  // is on for non-password reasons (e.g. terminal "Secure Keyboard Entry") and it blocks
++  // the right-Shift toggle.
++  private var secureInputGuardEnabled = true
+   // Auto-English on/off, mirrors `auto_english/enabled` in the Rime config (default off).
+   // When the input has no candidates (typical for table schemas like wubi without
+   // sentence input), the frontend takes over: it accumulates raw ASCII into its own
+@@ -58,6 +64,15 @@ final class SquirrelInputController: IMKInputController {
+   // transition from "had candidates" to zero, so it won't grab inputs that start
+   // at zero candidates (e.g. the z / ` reverse-lookup leaders, or uppercase).
+   private var previousCandidateCount = 0
++  // Temporary-schema invoke, mirrors `temp_schema/enabled` + `key` + `schema` (default off).
++  // Pressing the trigger key while idle switches to the target schema (e.g. pinyin) for one
++  // input, then auto-switches back to the origin schema once that input commits or is cleared.
++  private var tempSchemaEnabled = false
++  private var tempSchemaKey = "z"
++  private var tempSchemaTarget = ""
++  private var tempSchemaActive = false
++  private var tempSchemaOrigin = ""
++  private var tempSchemaComposed = false
+   // Command+digit schema hotkeys, mirrors `schema_hotkeys/enabled` + the
+   // `schema_hotkeys/bindings` map (digit -> schema id) in the global Rime config.
+   // Keyed by macOS keycode so both the IMKit path and the global event tap can
+@@ -98,6 +113,14 @@ final class SquirrelInputController: IMKInputController {
+ 
+     switch event.type {
+     case .flagsChanged:
++      // In secure input (password fields), the character keydowns are withheld from the
++      // input method but modifier flagsChanged still arrive — so a Shift+letter looks like
++      // a lone Shift tap to ascii_composer and spuriously toggles ascii_mode (showing the
++      // 中/英 notification). Don't feed modifier changes to Rime while secure input is on.
++      if secureInputGuardEnabled, IsSecureEventInputEnabled() {
++        lastModifiers = modifiers
++        break
++      }
+       // In frontend English mode, swallow modifier changes so Rime can't act on
+       // a Shift tap (e.g. toggle ascii_mode) while we own the composition.
+       if englishMode {
+@@ -176,6 +199,20 @@ final class SquirrelInputController: IMKInputController {
+         break
+       }
+ 
++      // Temp-schema trigger: the configured key (while idle) invokes a target schema.
++      if handleTempSchemaTriggerIfNeeded(event: event, modifiers: modifiers) {
++        return true
++      }
++      // In temp mode with nothing composed yet, Escape cancels back to the origin schema
++      // (while composing, Escape goes to the engine and the empty-after-clear path returns).
++      if tempSchemaActive, event.keyCode == UInt16(kVK_Escape), !isComposing() {
++        let origin = tempSchemaOrigin
++        resetTempSchema()
++        if !origin.isEmpty { _ = rimeAPI.select_schema(session, origin) }
++        rimeUpdate()
++        return true
++      }
++
+       insertPanguSpaceForPassthroughIfNeeded(event: event, modifiers: modifiers)
+ 
+       if handleSmartSpaceIfNeeded(event: event, modifiers: modifiers) {
+@@ -274,6 +311,31 @@ final class SquirrelInputController: IMKInputController {
+     return true
+   }
+ 
++  // Cheap gate for the event tap: only worth inspecting keystrokes when the active
++  // controller could actually start a temp session.
++  var isTempSchemaArmed: Bool { tempSchemaEnabled && !tempSchemaActive && session != 0 }
++
++  // Enter temp-schema mode if `char` is the trigger key and we're idle in a non-target
++  // schema. Shared by the IMKit keydown path and the global event tap — terminals
++  // (iTerm2 / Ghostty) echo the trigger key even when handle() returns true, so the tap
++  // must swallow it the same way it does Command+Space.
++  func tryEnterTempSchema(char: String?) -> Bool {
++    guard tempSchemaEnabled, !tempSchemaActive, !tempSchemaTarget.isEmpty,
++          char == tempSchemaKey, session != 0,
++          !rimeAPI.get_option(session, "ascii_mode"),
++          !isComposing() else { return false }
++    // Ask the engine for the current schema (the tracked `schemaId` may still be "" if
++    // no update has run yet) so we can reliably switch back to it; bail if unavailable.
++    let origin = currentSchemaIdFromEngine()
++    guard !origin.isEmpty, origin != tempSchemaTarget else { return false }
++    tempSchemaOrigin = origin
++    tempSchemaActive = true
++    tempSchemaComposed = false
++    _ = rimeAPI.select_schema(session, tempSchemaTarget)
++    rimeUpdate()
++    return true
++  }
++
+   override func recognizedEvents(_ sender: Any!) -> Int {
+     // print("[DEBUG] recognizedEvents:")
+     return Int(NSEvent.EventTypeMask.Element(arrayLiteral: .keyDown, .flagsChanged).rawValue)
+@@ -296,6 +358,16 @@ final class SquirrelInputController: IMKInputController {
+     }
+     preedit = ""
+     resetEnglishMode()
++    resetTempSchema()
++    // Load this schema's settings now so the first keystroke (e.g. the temp-schema
++    // trigger) sees the right config instead of defaults; otherwise on a freshly
++    // activated controller the first key falls through to the engine before
++    // reloadSpacingSettings has run in the first rimeUpdate. Don't set schemaId here so
++    // the schema-change block in rimeUpdate still loads the panel style on first update.
++    let activeSchema = currentSchemaIdFromEngine()
++    if !activeSchema.isEmpty {
++      reloadSpacingSettings(schemaID: activeSchema)
++    }
+   }
+ 
+   override init!(server: IMKServer!, delegate: Any!, client: Any!) {
+@@ -310,6 +382,11 @@ final class SquirrelInputController: IMKInputController {
+     if englishMode { commitEnglishBuffer() }
+     hidePalettes()
+     commitComposition(sender)
++    // Leaving the app mid temp-schema: after committing any pending input, restore origin.
++    if tempSchemaActive, !tempSchemaOrigin.isEmpty {
++      _ = rimeAPI.select_schema(session, tempSchemaOrigin)
++    }
++    resetTempSchema()
+     client = nil
+     if SquirrelInputController.current === self {
+       SquirrelInputController.current = nil
+@@ -535,24 +612,43 @@ private extension SquirrelInputController {
+     return handled
+   }
+ 
+-  func rimeConsumeCommittedText() {
++  @discardableResult
++  func rimeConsumeCommittedText() -> Bool {
+     var commitText = RimeCommit.rimeStructInit()
+     if rimeAPI.get_commit(session, &commitText) {
+       if let text = commitText.text {
+         commit(string: String(cString: text))
+       }
+       _ = rimeAPI.free_commit(&commitText)
++      return true
+     }
++    return false
+   }
+ 
+   // swiftlint:disable:next cyclomatic_complexity
+   func rimeUpdate() {
+     // print("[DEBUG] rimeUpdate")
+-    rimeConsumeCommittedText()
++    let didCommit = rimeConsumeCommittedText()
+     // The frontend owns the display while in English mode; nothing from Rime
+     // should overwrite our marked text.
+     if englishMode { return }
+ 
++    // Temp-schema auto-switch-back: once the temporary input commits (上屏) or is
++    // cleared after composing (Esc), return to the origin schema. The first update
++    // right after the trigger has an empty composition but composed==false, so it
++    // won't bounce back immediately.
++    if tempSchemaActive {
++      if isComposing() {
++        tempSchemaComposed = true
++      } else if didCommit || tempSchemaComposed {
++        tempSchemaActive = false
++        tempSchemaComposed = false
++        if !tempSchemaOrigin.isEmpty {
++          _ = rimeAPI.select_schema(session, tempSchemaOrigin)
++        }
++      }
++    }
++
+     var status = RimeStatus_stdbool.rimeStructInit()
+     if rimeAPI.get_status(session, &status) {
+       // enable schema specific ui style
+@@ -681,7 +777,12 @@ private extension SquirrelInputController {
+       var panelCaret = caretPos.utf16Offset(in: preedit)
+       // Prefix the floating preedit with the current schema name, e.g. "〔极点五笔〕 ".
+       // Floating only (inline marked text would land in the host app's text field).
+-      if schemaNameInPreeditEnabled, !inlinePreedit, !panelPreedit.isEmpty, !schemaDisplayName.isEmpty {
++      // In temp-schema mode show it even with empty composition, so the panel persists
++      // as a "you're in 〔雾凇拼音〕 now" indicator (like reverse lookup) instead of a
++      // status popup that times out; otherwise only show it while composing.
++      let wantSchemaPrefix = !inlinePreedit && !schemaDisplayName.isEmpty &&
++        (tempSchemaActive || (schemaNameInPreeditEnabled && !panelPreedit.isEmpty))
++      if wantSchemaPrefix {
+         let prefix = "〔\(schemaDisplayName)〕 "
+         let shift = prefix.utf16.count
+         panelPreedit = prefix + panelPreedit
+@@ -794,6 +895,10 @@ private extension SquirrelInputController {
+     panguSpacingEnabled = config.getBool("pangu_spacing/enabled") ?? true
+     smartSpaceEnabled = config.getBool("smart_space/enabled") ?? true
+     autoEnglishEnabled = config.getBool("auto_english/enabled") ?? false
++    tempSchemaEnabled = config.getBool("temp_schema/enabled") ?? false
++    tempSchemaKey = config.getString("temp_schema/key") ?? "z"
++    tempSchemaTarget = config.getString("temp_schema/schema") ?? ""
++    secureInputGuardEnabled = config.getBool("secure_input_guard/enabled") ?? true
+     schemaNameInPreeditEnabled = config.getBool("schema_name_in_preedit/enabled") ?? false
+     schemaDisplayName = config.getString("schema/name") ?? ""
+     // `style/preedit_placeholder` lives in the squirrel base config, not the schema.
+@@ -912,6 +1017,29 @@ private extension SquirrelInputController {
+     previousCandidateCount = 0
+   }
+ 
++  // Temp-schema trigger: while idle (not composing, Chinese mode), the configured key
++  // switches to the target schema for one input. The key itself is consumed (not typed);
++  // rimeUpdate switches back to the origin once that input commits or is cleared.
++  private func handleTempSchemaTriggerIfNeeded(event: NSEvent, modifiers: NSEvent.ModifierFlags) -> Bool {
++    guard modifiers.intersection([.command, .control, .option, .shift]).isEmpty else { return false }
++    return tryEnterTempSchema(char: event.charactersIgnoringModifiers)
++  }
++
++  private func resetTempSchema() {
++    tempSchemaActive = false
++    tempSchemaComposed = false
++  }
++
++  // The engine's current schema id, independent of the tracked `schemaId` (which is ""
++  // until the first update). Used to remember where to switch back from temp mode.
++  private func currentSchemaIdFromEngine() -> String {
++    var buffer = [CChar](repeating: 0, count: 512)
++    if rimeAPI.get_current_schema(session, &buffer, buffer.count) {
++      return String(cString: buffer)
++    }
++    return schemaId
++  }
++
+   // After a backspace, if the (shortened) buffer is a pure-letter code, feed it back
+   // to the engine. If candidates reappear, hand control back to the engine (so its
+   // candidates / reverse lookup return); otherwise the engine lets go again and we
 -- 
 2.50.1 (Apple Git-155)
 
