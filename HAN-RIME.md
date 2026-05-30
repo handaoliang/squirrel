@@ -170,7 +170,7 @@ patch:
 - **触发**:空闲(未组字、中文模式、本方案开启该功能)按下触发键 → 用 `get_current_schema` 记下当前方案当"老家" → `select_schema` 切到目标方案 → **消费掉该键**(不打出)。
 - **常驻指示**:临时态下即使还没打字,浮窗也常驻显示 `〔目标方案名〕`(复用 §6),像反查一样;一打字变成 `〔雾凇拼音〕 nihao` + 候选。不依赖会超时消失的通知弹窗。
 - **自动切回**:`rimeUpdate` 检测——组字区从有变空时,**上屏**(commit)或**打了又被 Esc 清空**就切回老家;空闲态按 Esc 也直接切回。
-- **终端兼容**:与 `⌘Space` 同构,触发键**同时挂在全局 `CGEventTap`** 上。iTerm2 / Ghostty 等终端即使 `handle()` 返回 true 也会回显触发键,必须在 tap 层吞掉(依赖辅助功能权限)。
+- **终端兼容**:与 `⌘Space` 同构,触发键**同时挂在全局 `CGEventTap`** 上(**按 keycode 匹配**,而非字符——会话层取字符在部分终端不可靠)。终端即使 `handle()` 返回 true 也会回显触发键,必须在 tap 层吞掉(依赖辅助功能权限)。
 - **切 App 首键**:`activateServer` 时即预加载本方案配置,避免切到新 App 后"第一下触发键落到引擎(命中旧的 z 反查)、第二下才进拼音"。
 
 ### 开关与配置
@@ -189,15 +189,16 @@ patch:
 
 ---
 
-## 9. 密码框 Shift 误触拦截
+## 9. 组字期间宿主误触「结束组字」的兜底
 
-绑了「右 Shift 切中英」时,在**密码框(安全输入)**里按 Shift+字母打大写,会误弹「中/英」提示:安全输入态下字母 keydown 被系统挡住、只剩 Shift 的 flagsChanged,被 `ascii_composer` 当成一次 Shift 轻敲而误切。
+部分宿主(非规范实现)会在你**还在组字时**主动调用输入法的 `commitComposition`(有的每敲一键就调一次,有的在退格时调)。原逻辑收到就把当前**原始码 / 英文缓冲**直接上屏并清空组字 —— 表现为「组字累积不起来、后一个字母替换前一个」或「退格把整串顶上去」,而换个 App 又正常。
 
-处理:flagsChanged 分支开头检测 `IsSecureEventInputEnabled()`,**安全输入态下不把修饰键变化喂给引擎**,从源头不触发误切。普通输入不受影响。
+修法依据一个稳固事实:真正的「结束组字」只发生在**切走焦点**时(走 `deactivateServer`,它会先提交、再调 `commitComposition`,那时已不在组字态)。于是用一个 `isDeactivating` 标志区分:
 
-### 开关
+- **仅在 deactivate 时** `commitComposition` 才真正「上屏 + 清空」;
+- 宿主在组字途中**乱调的一律忽略**:普通组字原样保留(引擎里继续累积),英文模式则重挂回组字缓冲。
 
-配置项 **`secure_input_guard/enabled`**(布尔,**默认开**)。注意 `IsSecureEventInputEnabled()` 是**全局**标志,终端「安全键盘输入」或安全输入卡住时也为真——若那时右 Shift 切中英失效,设为 `false` 关掉本拦截。它**不会**误伤"能输中文的密码框":凡是中文能打进去的框,安全输入必然是关的,本拦截不生效。
+规范 App 不受影响(它们只在切焦点时经 deactivate 走到这里),无需配置,自动生效。
 
 ---
 
@@ -220,7 +221,6 @@ patch:
     enabled: true
     key: z
     schema: rime_ice
-  secure_input_guard/enabled: true   # 密码框 Shift 误触中英提示的拦截(默认开)
 ```
 
 样式项放 `squirrel.custom.yaml` 的 `style/` 下:

@@ -295,12 +295,13 @@ private let commandSpaceTapCallback: CGEventTapCallBack = { _, type, event, refc
     return nil
   }
   // Temp-schema trigger key (e.g. z): non-compliant terminals echo it even when the
-  // input method consumes it via handle(), so swallow it here. Only inspect bare keys
+  // input method consumes it via handle(), so swallow it here. Match by keycode (like the
+  // Command+digit hotkeys) — NSEvent(cgEvent:).characters is unreliable at this layer for
+  // some terminals, which then fail to swallow and echo the key. Only inspect bare keys
   // (no modifiers) when the active controller is idle in a temp-capable schema.
   if event.flags.intersection(modifierMask).isEmpty,
      let controller = SquirrelInputController.current, controller.isTempSchemaArmed,
-     let nsEvent = NSEvent(cgEvent: event),
-     controller.tryEnterTempSchema(char: nsEvent.charactersIgnoringModifiers) {
+     controller.tryEnterTempSchema(keyCode: UInt16(keycode)) {
     return nil
   }
   return Unmanaged.passUnretained(event)
